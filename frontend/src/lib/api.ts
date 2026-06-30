@@ -66,12 +66,12 @@ export async function getDeal(id: number) {
 
 /* ─── Financials ─── */
 export async function getFinancialProfile(companyId: number) {
-  return apiCall<any>(`/financials/${companyId}`);
+  return apiCall<any>(`/agents/financials/${companyId}`);
 }
 
 /* ─── LBO ─── */
 export async function getLBO(companyId: number) {
-  return apiCall<any>(`/lbo/${companyId}`);
+  return apiCall<any>(`/agents/lbo/${companyId}`);
 }
 
 /* ─── Research ─── */

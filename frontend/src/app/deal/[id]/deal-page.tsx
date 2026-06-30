@@ -412,12 +412,13 @@ export default function DealPage({ id }: { id: string }) {
       const drivers = Array.isArray(r?.growth_drivers) ? r.growth_drivers.join("; ") : "";
       const risks = Array.isArray(r?.risks) ? r.risks.join("; ") : "";
       const summary = `Market TAM: ${tam}, CAGR: ${cagr}. Growth drivers: ${drivers}. Key risks: ${risks}.`;
+      const now = new Date().toLocaleDateString("en-US", { month: "short", year: "numeric" });
       items.push({
         type: "Market",
         typeTier: "teal",
         title: "Industry Research Report",
         source: "Industry Research Agent",
-        date: "2025",
+        date: now,
         snippet: summary,
       });
       if (Array.isArray(r?.sources)) {
@@ -429,7 +430,7 @@ export default function DealPage({ id }: { id: string }) {
             typeTier: "gray",
             title: `Source ${i + 1}`,
             source: host,
-            date: "2025",
+            date: now,
             snippet: url,
           });
         });
@@ -501,23 +502,54 @@ export default function DealPage({ id }: { id: string }) {
   const moatData = useMemo(() => {
     if (!competitiveData?.competitive_map) return [];
     const c = competitiveData.competitive_map;
-    if (typeof c === "object" && !Array.isArray(c) && c?.moat) {
-      const m = c.moat as any;
-      if (Array.isArray(m)) {
-        return m.map((item: any) => ({
-          label: item?.label ?? item?.name ?? "",
-          rating: item?.rating ?? "",
-          tier: (item?.tier ?? 2) as 1 | 2 | 3,
-          note: item?.note ?? item?.description ?? "",
+    if (typeof c === "object" && !Array.isArray(c) && c?.moat_assessment) {
+      const m = c.moat_assessment as any;
+      const labels: Record<string, string> = {
+        switching_costs: "Switching Costs",
+        network_effects: "Network Effects",
+        ip_proprietary_tech: "IP / Proprietary Tech",
+        distribution_advantages: "Distribution Advantages",
+        brand_reputation: "Brand / Reputation",
+        overall_moat: "Overall Moat",
+      };
+      const entries = Object.entries(m)
+        .filter(([k]) => k !== "confidence_score" && k !== "data_sources")
+        .map(([k, v]) => ({
+          label: labels[k] || k.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
+          rating: typeof v === "string" ? v.slice(0, 80) : String(v).slice(0, 80),
+          tier: 2 as 1 | 2 | 3,
+          note: typeof v === "string" ? v : "",
         }));
-      }
+      return entries;
     }
     return [];
   }, [competitiveData]);
 
-  /* LBO state */
+  /* LBO state — initialize from backend data when available */
   const base = { entryMult: 8, debtPct: 60, hold: 5, g1: 9, g2: 8, g3: 7, g4: 6, g5: 5, marginExp: 75, exitMult: 11 };
   const [lbo, setLbo] = useState({ ...base });
+  useEffect(() => {
+    if (lboData?.scenarios?.base && financialsData?.ebitda) {
+      const b = lboData.scenarios.base;
+      const entryEv = b.entry_ev ?? (b.entry_equity + b.entry_debt);
+      const ebitda = financialsData.ebitda / 1e6;
+      const entryMult = ebitda > 0 ? Math.round(entryEv / ebitda * 10) / 10 : base.entryMult;
+      const debtPct = entryEv > 0 ? Math.round((b.entry_debt / entryEv) * 100) : base.debtPct;
+      const hold = b.debt_schedule?.length ?? base.hold;
+      const exitMult = b.exit_ev && b.ebitda_projection?.length
+        ? Math.round((b.exit_ev / b.ebitda_projection[b.ebitda_projection.length - 1]) * 10) / 10
+        : base.exitMult;
+      const revGrowth = financialsData.revenue_growth ?? 0;
+      const g1 = Math.round((revGrowth + 2) * 10) / 10;
+      setLbo({
+        entryMult, debtPct, hold,
+        g1: Math.max(1, g1), g2: Math.max(1, g1 - 1), g3: Math.max(1, g1 - 2),
+        g4: Math.max(1, g1 - 3), g5: Math.max(1, g1 - 4),
+        marginExp: Math.round((financialsData.ebitda_margin ?? 0.75) * 100),
+        exitMult,
+      });
+    }
+  }, [lboData, financialsData]);
   const [analysisOpen, setAnalysisOpen] = useState(true);
   const setLboKey = (key: string, val: string) => {
     const n = parseFloat(val);
@@ -579,6 +611,36 @@ export default function DealPage({ id }: { id: string }) {
     if (el) memoRef.current.scrollTo({ top: (el as HTMLElement).offsetTop - 16, behavior: "smooth" });
   };
 
+  /* Risk flags — computed from financials and research data */
+  const riskFlags = useMemo(() => {
+    const flags: { label: string; severity: "high" | "medium" | "low"; detail: string }[] = [];
+    if (financialsData) {
+      if (financialsData.net_debt_ebitda != null && financialsData.net_debt_ebitda > 5) {
+        flags.push({ label: "High Leverage", severity: "high", detail: `Net debt / EBITDA at ${financialsData.net_debt_ebitda.toFixed(1)}x` });
+      }
+      if (financialsData.ebitda_margin != null && financialsData.ebitda_margin < 0.10) {
+        flags.push({ label: "Low Margin", severity: "medium", detail: `EBITDA margin ${(financialsData.ebitda_margin * 100).toFixed(1)}%` });
+      }
+      if (financialsData.revenue_growth != null && financialsData.revenue_growth < 0) {
+        flags.push({ label: "Declining Revenue", severity: "high", detail: `Revenue growth ${(financialsData.revenue_growth * 100).toFixed(1)}%` });
+      }
+      if (financialsData.fcf_yield != null && financialsData.fcf_yield < 0.03) {
+        flags.push({ label: "Low FCF Yield", severity: "medium", detail: `FCF yield ${(financialsData.fcf_yield * 100).toFixed(1)}%` });
+      }
+    }
+    if (researchData?.research?.risks) {
+      const risks = researchData.research.risks;
+      if (typeof risks === "string") {
+        flags.push({ label: "Market Risk", severity: "medium", detail: risks.slice(0, 120) });
+      } else if (Array.isArray(risks)) {
+        risks.slice(0, 3).forEach((r: any) => {
+          flags.push({ label: r?.category || "Risk", severity: r?.severity || "medium", detail: String(r?.description || r).slice(0, 120) });
+        });
+      }
+    }
+    return flags;
+  }, [financialsData, researchData]);
+
   const tabs = [
     { id: "overview" as const, label: "Overview" },
     { id: "financials" as const, label: "Financials" },
@@ -598,27 +660,65 @@ export default function DealPage({ id }: { id: string }) {
     return rev && rev > 0 ? rev / 1e6 : 1.0;
   }, [financialsData]);
 
-  const o = useMemo(() => computeLBO(baseEbitda, baseRev, lbo), [baseEbitda, baseRev, lbo]);
-  const lboOutputs = [
-    { label: "IRR", value: fmtPct(o.irr), color: irrColor(o.irr), sub: "gross, 5yr" },
-    { label: "MOIC", value: o.moic.toFixed(2) + "x", color: "#C8A96E", sub: "multiple of capital" },
-    { label: "Entry EV", value: fmtUSD(o.entryEV), color: "#E8E8F0", sub: fmtUSD(o.equity) + " equity" },
-    { label: "Exit EV", value: fmtUSD(o.exitEV), color: "#E8E8F0", sub: fmtUSD(o.exitEbitda) + " EBITDA" },
-    { label: "Exit Equity", value: fmtUSD(o.exitEquity), color: "#C8A96E", sub: fmtUSD(o.remaining) + " net debt" },
-  ];
-  const entryAxis = [7, 8, 9, 10, 11];
-  const exitAxis = [13, 12, 11, 10, 9];
-  const heatRows = useMemo(() => exitAxis.map((ex) => ({
-    exit: ex + "x",
-    cells: entryAxis.map((en) => {
-      const r = computeLBO(baseEbitda, baseRev, lbo, en, ex);
-      const isBase = Math.abs(en - lbo.entryMult) < 0.01 && Math.abs(ex - lbo.exitMult) < 0.01;
-      return {
-        irr: fmtPct(r.irr), fg: irrColor(r.irr), bg: irrBg(r.irr),
-        border: isBase ? "2px solid #C8A96E" : "1px solid #1E1E2E",
-      };
-    }),
-  })), [baseEbitda, baseRev, lbo]);
+/* LBO outputs — use backend data when available, else fall back to local computation */
+  const lboOutputs = useMemo(() => {
+    if (lboData?.lbo_result) {
+      const r = lboData.lbo_result;
+      const entryEv = r.entry_equity + r.entry_debt;
+      return [
+        { label: "IRR", value: fmtPct(r.irr), color: irrColor(r.irr), sub: "gross, base case" },
+        { label: "MOIC", value: `${r.moic.toFixed(2)}x`, color: "#C8A96E", sub: "multiple of capital" },
+        { label: "Entry EV", value: fmtUSD(entryEv), color: "#E8E8F0", sub: `${fmtUSD(r.entry_equity)} equity / ${fmtUSD(r.entry_debt)} debt` },
+        { label: "Exit EV", value: fmtUSD(r.exit_ev), color: "#E8E8F0", sub: `exit valuation` },
+        { label: "Exit Equity", value: fmtUSD(r.exit_equity), color: "#C8A96E", sub: `${fmtUSD(r.exit_ev - r.exit_equity)} net debt at exit` },
+      ];
+    }
+    const o = computeLBO(baseEbitda, baseRev, lbo);
+    return [
+      { label: "IRR", value: fmtPct(o.irr), color: irrColor(o.irr), sub: "gross, 5yr" },
+      { label: "MOIC", value: o.moic.toFixed(2) + "x", color: "#C8A96E", sub: "multiple of capital" },
+      { label: "Entry EV", value: fmtUSD(o.entryEV), color: "#E8E8F0", sub: fmtUSD(o.equity) + " equity" },
+      { label: "Exit EV", value: fmtUSD(o.exitEV), color: "#E8E8F0", sub: fmtUSD(o.exitEbitda) + " EBITDA" },
+      { label: "Exit Equity", value: fmtUSD(o.exitEquity), color: "#C8A96E", sub: fmtUSD(o.remaining) + " net debt" },
+    ];
+  }, [lboData, baseEbitda, baseRev, lbo]);
+
+  /* Sensitivity grid — use backend data when available */
+  const heatRows = useMemo(() => {
+    if (lboData?.sensitivity_grid) {
+      const sg = lboData.sensitivity_grid;
+      const entryMultiples = sg.entry_multiples || [];
+      const exitMultiples = sg.exit_multiples || [];
+      const grid = sg.grid || [];
+      if (!entryMultiples.length || !exitMultiples.length) return [];
+      return exitMultiples.map((ex: number, ri: number) => ({
+        exit: ex + "x",
+        cells: entryMultiples.map((en: number, ci: number) => {
+          const irr = grid[ri]?.[ci] ?? 0;
+          const isBase = Math.abs(en - lbo.entryMult) < 0.5 && Math.abs(ex - lbo.exitMult) < 0.5;
+          return {
+            irr: fmtPct(irr),
+            fg: irrColor(irr),
+            bg: irrBg(irr),
+            border: isBase ? "2px solid #C8A96E" : "1px solid #1E1E2E",
+          };
+        }),
+      }));
+    }
+    const entryAxis = [7, 8, 9, 10, 11];
+    const exitAxis = [13, 12, 11, 10, 9];
+    return exitAxis.map((ex) => ({
+      exit: ex + "x",
+      cells: entryAxis.map((en) => {
+        const r = computeLBO(baseEbitda, baseRev, lbo, en, ex);
+        const isBase = Math.abs(en - lbo.entryMult) < 0.01 && Math.abs(ex - lbo.exitMult) < 0.01;
+        return {
+          irr: fmtPct(r.irr), fg: irrColor(r.irr), bg: irrBg(r.irr),
+          border: isBase ? "2px solid #C8A96E" : "1px solid #1E1E2E",
+        };
+      }),
+    }));
+  }, [lboData, baseEbitda, baseRev, lbo]);
 
   const growthInputs = [
     { label: "Y1", key: "g1" }, { label: "Y2", key: "g2" }, { label: "Y3", key: "g3" },
@@ -631,6 +731,14 @@ export default function DealPage({ id }: { id: string }) {
 
   const resTypeColor = { teal: "#2DD4BF", gold: "#C8A96E", gray: "#6B7280" };
   const moatColor: Record<number, string> = { 1: "#EF4444", 2: "#F59E0B", 3: "#10B981" };
+
+  /* Sensitivity grid headers — use backend data when available */
+  const sensitivityHeaders = useMemo(() => {
+    if (lboData?.sensitivity_grid?.entry_multiples) {
+      return lboData.sensitivity_grid.entry_multiples as number[];
+    }
+    return [7, 8, 9, 10, 11];
+  }, [lboData]);
 
   return (
     <div>
@@ -736,9 +844,31 @@ export default function DealPage({ id }: { id: string }) {
             </div>
 
             <h2 className="mt-6 mb-[11px] font-mono text-[11px] tracking-[0.1em] uppercase text-[#6B7280]">Risk Flags</h2>
-            <div className="border border-dashed border-[#1E1E2E] p-[18px] text-center font-mono text-[10px] text-[#4b5160]">
-              No risk flags generated yet. Run the pipeline to populate.
-            </div>
+            {riskFlags.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                {riskFlags.map((f, i) => {
+                  const severityColor = f.severity === "high" ? "#EF4444" : f.severity === "medium" ? "#F59E0B" : "#10B981";
+                  return (
+                    <div key={i} className="flex items-start gap-3 bg-[#111118] border border-[#1E1E2E] px-4 py-3">
+                      <span className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: severityColor }} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-[13px] text-[#E8E8F0]">{f.label}</span>
+                          <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ backgroundColor: severityColor + "20", color: severityColor }}>
+                            {f.severity}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-[#6B7280] mt-1">{f.detail}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="border border-dashed border-[#1E1E2E] p-[18px] text-center font-mono text-[10px] text-[#4b5160]">
+                No risk flags generated yet. Run the pipeline to populate.
+              </div>
+            )}
 
             <h2 className="mt-6 mb-[11px] font-mono text-[11px] tracking-[0.1em] uppercase text-[#6B7280]">Thesis Snapshot</h2>
             {financialsData?.revenue ? (
@@ -911,17 +1041,32 @@ export default function DealPage({ id }: { id: string }) {
                 <div className="mt-4 border border-[#1E1E2E] bg-[#111118] p-4">
                   <div className="font-mono text-[10px] tracking-[0.08em] uppercase text-[#6B7280]">Quality of Earnings</div>
                   <div className="mt-[10px] flex flex-col gap-[9px]">
-                    {[
-                      { label: "Recurring revenue %", value: financialsData?.revenue ? "—" : "—", color: "#10B981" },
-                      { label: "Customer churn (gross)", value: "—", color: "#F59E0B" },
-                      { label: "Add-back adjustments", value: "—", color: "#C8A96E" },
-                      { label: "Working capital cycle", value: "—", color: "#E8E8F0" },
-                    ].map((q) => (
-                      <div key={q.label} className="flex justify-between text-[12.5px]">
-                        <span className="text-[#9aa0ad]">{q.label}</span>
-                        <span className="font-mono" style={{ color: q.color }}>{q.value}</span>
-                      </div>
-                    ))}
+                    {(() => {
+                      const qoeItems = [];
+                      if (financialsData?.revenue_growth != null) {
+                        qoeItems.push({ label: "Revenue growth trend", value: `${(financialsData.revenue_growth * 100).toFixed(1)}%`, color: financialsData.revenue_growth >= 0 ? "#10B981" : "#EF4444" });
+                      }
+                      if (financialsData?.ebitda_margin != null) {
+                        qoeItems.push({ label: "EBITDA margin", value: `${(financialsData.ebitda_margin * 100).toFixed(1)}%`, color: financialsData.ebitda_margin >= 0.2 ? "#10B981" : "#F59E0B" });
+                      }
+                      if (financialsData?.fcf_yield != null) {
+                        qoeItems.push({ label: "FCF yield", value: `${(financialsData.fcf_yield * 100).toFixed(1)}%`, color: financialsData.fcf_yield >= 0.05 ? "#10B981" : "#C8A96E" });
+                      }
+                      if (financialsData?.net_debt_ebitda != null) {
+                        qoeItems.push({ label: "Net debt / EBITDA", value: `${financialsData.net_debt_ebitda.toFixed(1)}x`, color: financialsData.net_debt_ebitda <= 3 ? "#10B981" : financialsData.net_debt_ebitda <= 5 ? "#F59E0B" : "#EF4444" });
+                      }
+                      if (qoeItems.length === 0) {
+                        return (
+                          <div className="text-[11px] text-[#4b5160] font-mono">No quality of earnings data available. Run the pipeline to populate.</div>
+                        );
+                      }
+                      return qoeItems.map((q) => (
+                        <div key={q.label} className="flex justify-between text-[12.5px]">
+                          <span className="text-[#9aa0ad]">{q.label}</span>
+                          <span className="font-mono" style={{ color: q.color }}>{q.value}</span>
+                        </div>
+                      ));
+                    })()}
                   </div>
                 </div>
               </div>
@@ -1068,7 +1213,7 @@ export default function DealPage({ id }: { id: string }) {
                   <thead>
                     <tr>
                       <th className="border border-[#1E1E2E] bg-[#0A0A0F] p-[7px] text-[9px] text-[#6B7280] font-medium">IRR</th>
-                      {entryAxis.map((h) => (
+                      {sensitivityHeaders.map((h) => (
                         <th key={h} className="border border-[#1E1E2E] bg-[#0A0A0F] p-[7px_10px] text-[11px] text-[#9aa0ad] font-medium text-center">
                           {h}x
                         </th>
@@ -1076,10 +1221,10 @@ export default function DealPage({ id }: { id: string }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {heatRows.map((hr) => (
+                    {heatRows.map((hr: { exit: string; cells: { irr: string; fg: string; bg: string; border: string }[] }) => (
                       <tr key={hr.exit}>
                         <td className="border border-[#1E1E2E] bg-[#0A0A0F] p-[7px_10px] text-[11px] text-[#9aa0ad] text-center font-medium">{hr.exit}</td>
-                        {hr.cells.map((c, ci) => (
+                        {hr.cells.map((c: { irr: string; fg: string; bg: string; border: string }, ci: number) => (
                           <td
                             key={ci}
                             className="p-[11px_10px] text-[12.5px] text-center font-semibold"
@@ -1122,12 +1267,20 @@ export default function DealPage({ id }: { id: string }) {
               </button>
               {analysisOpen && (
                 <div className="px-[22px] py-[18px] pl-10">
-                  <p className="m-0 mb-[13px] font-serif text-[14.5px] italic leading-[1.72] text-[#c4c6d0]">
-                    At the current base case, the model returns a <span className="text-[#C8A96E] not-italic">{lboOutputs[0].value} IRR</span> and <span className="text-[#C8A96E] not-italic">{lboOutputs[1].value} MOIC</span> over a {lbo.hold}-year hold. The return is driven by EBITDA growth, margin expansion, and deleveraging. Review the sensitivity grid below to understand how returns shift under different entry and exit multiple assumptions.
-                  </p>
-                  <p className="m-0 font-serif text-[14.5px] italic leading-[1.72] text-[#c4c6d0]">
-                    The sensitivity grid shows returns vary significantly across entry/exit multiples. Key risks to monitor: exit-multiple compression, revenue growth shortfalls, and margin expansion delays. Run the full pipeline to generate a detailed associate analysis with company-specific risks and recommendations.
-                  </p>
+                  {lboData?.interpretation ? (
+                    <p className="m-0 font-serif text-[14.5px] italic leading-[1.72] text-[#c4c6d0]">
+                      {lboData.interpretation}
+                    </p>
+                  ) : (
+                    <>
+                      <p className="m-0 mb-[13px] font-serif text-[14.5px] italic leading-[1.72] text-[#c4c6d0]">
+                        At the current base case, the model returns a <span className="text-[#C8A96E] not-italic">{lboOutputs[0].value} IRR</span> and <span className="text-[#C8A96E] not-italic">{lboOutputs[1].value} MOIC</span> over a {lbo.hold}-year hold. The return is driven by EBITDA growth, margin expansion, and deleveraging. Review the sensitivity grid below to understand how returns shift under different entry and exit multiple assumptions.
+                      </p>
+                      <p className="m-0 font-serif text-[14.5px] italic leading-[1.72] text-[#c4c6d0]">
+                        The sensitivity grid shows returns vary significantly across entry/exit multiples. Key risks to monitor: exit-multiple compression, revenue growth shortfalls, and margin expansion delays. Run the full pipeline to generate a detailed associate analysis with company-specific risks and recommendations.
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
             </div>
