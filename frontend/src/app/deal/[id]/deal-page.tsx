@@ -12,12 +12,15 @@ import {
   getMemo,
   runPipeline,
   getRunStatus,
+  listAgentRuns,
   type DealRead,
   type FinancialProfile,
   type LBOResponse,
   type CompetitiveResponse,
   type ResearchResponse,
   type MemoResponse,
+  type AgentRunStatus,
+  type AgentRunLog,
 } from "@/lib/api";
 
 /* ─── helpers ─── */
@@ -108,6 +111,34 @@ export default function DealPage({ id }: { id: string }) {
     status: string | null;
     polling: boolean;
   }>({ runId: null, status: null, polling: false });
+  const [agentRuns, setAgentRuns] = useState<AgentRunLog[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
+
+  /* Compute pipeline completion based on loaded data */
+  const pipelineProgress = useMemo(() => {
+    const steps = [
+      !!financialsData,
+      !!researchData,
+      !!competitiveData,
+      !!lboData,
+      !!memoData,
+    ];
+    const done = steps.filter(Boolean).length;
+    return { done, total: steps.length, pct: Math.round((done / steps.length) * 100) };
+  }, [financialsData, researchData, competitiveData, lboData, memoData]);
+
+  /* Fetch agent runs for this deal */
+  const fetchAgentRuns = useCallback(async () => {
+    setRunsLoading(true);
+    try {
+      const runs = await listAgentRuns(20);
+      setAgentRuns(runs);
+    } catch {
+      // silently fail
+    } finally {
+      setRunsLoading(false);
+    }
+  }, []);
 
   /* Reusable data refresh */
   const refreshData = useCallback(async (companyId: number, memoId?: number | null) => {
@@ -172,6 +203,7 @@ export default function DealPage({ id }: { id: string }) {
         if (attempts >= maxAttempts) {
           setPipelineRun({ runId: res.run_id, status: "timeout", polling: false });
           addToast("warning", "Pipeline timeout", "The pipeline is still running. Check back later.");
+          fetchAgentRuns();
           return;
         }
         attempts++;
@@ -183,11 +215,13 @@ export default function DealPage({ id }: { id: string }) {
             addToast("success", "Pipeline complete", "All agents finished. Refreshing data…");
             // Refresh all data
             await refreshData(companyId, dealData?.memo_id);
+            fetchAgentRuns();
             return;
           }
           if (agentStatus === "failed" || agentStatus === "failure") {
             setPipelineRun({ runId: res.run_id, status: "failed", polling: false });
             addToast("error", "Pipeline failed", status.errors?.[0] ?? "Check agent logs for details.");
+            fetchAgentRuns();
             return;
           }
           setPipelineRun({ runId: res.run_id, status: agentStatus, polling: true });
@@ -254,6 +288,7 @@ export default function DealPage({ id }: { id: string }) {
         }
 
         await Promise.all(promises);
+        fetchAgentRuns();
       } catch (err) {
         console.error("Failed to fetch deal data", err);
         addToast("warning", "Backend unavailable", "Showing mock data for this deal.");
@@ -730,19 +765,93 @@ export default function DealPage({ id }: { id: string }) {
           <div className="bg-[#0A0A0F] p-5">
             <div className="flex items-center justify-between mb-[13px]">
               <h2 className="m-0 font-mono text-[11px] tracking-[0.1em] uppercase text-[#6B7280]">Agent Run History</h2>
-              <span className="font-mono text-[10px] text-[#6B7280]">0 live</span>
+              <div className="flex items-center gap-3">
+                {pipelineRun.polling && (
+                  <span className="flex items-center gap-1.5 font-mono text-[10px] text-[#2DD4BF]">
+                    <span className="w-[6px] h-[6px] rounded-full bg-[#2DD4BF] animate-pulse" />
+                    Live
+                  </span>
+                )}
+                <button
+                  onClick={fetchAgentRuns}
+                  className="font-mono text-[10px] text-[#6B7280] hover:text-[#E8E8F0] transition-colors cursor-pointer"
+                  disabled={runsLoading}
+                >
+                  {runsLoading ? "Loading…" : "Refresh"}
+                </button>
+              </div>
             </div>
-            <div className="border border-dashed border-[#1E1E2E] p-[18px] text-center font-mono text-[10px] text-[#4b5160]">
-              No agent runs yet. Run the pipeline to populate.
-            </div>
+
+            {/* Active run */}
+            {pipelineRun.runId && (
+              <div className="border border-[#1E1E2E] p-[12px] mb-[10px]">
+                <div className="flex items-center justify-between">
+                  <div className="font-mono text-[10px] text-[#E8E8F0]">
+                    Run <span className="text-[#C8A96E]">{pipelineRun.runId.slice(0, 8)}</span>
+                  </div>
+                  <span
+                    className="font-mono text-[9px] uppercase px-[6px] py-[2px] border"
+                    style={{
+                      color: pipelineRun.status === "complete" ? "#10B981" : pipelineRun.status === "failed" ? "#EF4444" : "#2DD4BF",
+                      borderColor: pipelineRun.status === "complete" ? "#10B981" : pipelineRun.status === "failed" ? "#EF4444" : "#2DD4BF",
+                      background: pipelineRun.status === "complete" ? "rgba(16,185,129,0.10)" : pipelineRun.status === "failed" ? "rgba(239,68,68,0.10)" : "rgba(45,212,191,0.10)",
+                    }}
+                  >
+                    {pipelineRun.status ?? "running"}
+                  </span>
+                </div>
+                {pipelineRun.polling && (
+                  <div className="mt-[8px] font-mono text-[10px] text-[#6B7280]">Polling for status…</div>
+                )}
+              </div>
+            )}
+
+            {/* Run list */}
+            {agentRuns.length === 0 && !pipelineRun.runId ? (
+              <div className="border border-dashed border-[#1E1E2E] p-[18px] text-center font-mono text-[10px] text-[#4b5160]">
+                No agent runs yet. Run the pipeline to populate.
+              </div>
+            ) : (
+              <div className="space-y-[8px]">
+                {agentRuns.slice(0, 8).map((run) => (
+                  <div key={run.run_id} className="border border-[#1E1E2E] p-[10px] flex items-center justify-between">
+                    <div>
+                      <div className="font-mono text-[10px] text-[#E8E8F0]">
+                        {run.agent_name} <span className="text-[#4b5160]">·</span>{" "}
+                        <span className="text-[#C8A96E]">{run.run_id.slice(0, 8)}</span>
+                      </div>
+                      <div className="font-mono text-[9px] text-[#6B7280] mt-[2px]">
+                        {run.created_at ? new Date(run.created_at).toLocaleString() : "—"}
+                      </div>
+                    </div>
+                    <span
+                      className="font-mono text-[9px] uppercase px-[5px] py-[1px] border"
+                      style={{
+                        color: (run.status?.toLowerCase() === "complete" || run.status?.toLowerCase() === "completed") ? "#10B981" : (run.status?.toLowerCase() === "failed" || run.status?.toLowerCase() === "failure") ? "#EF4444" : "#2DD4BF",
+                        borderColor: (run.status?.toLowerCase() === "complete" || run.status?.toLowerCase() === "completed") ? "#10B981" : (run.status?.toLowerCase() === "failed" || run.status?.toLowerCase() === "failure") ? "#EF4444" : "#2DD4BF",
+                      }}
+                    >
+                      {run.status ?? "unknown"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Pipeline progress */}
             <div className="mt-[14px] bg-[#111118] border border-[#1E1E2E] p-[14px]">
               <div className="font-mono text-[10px] tracking-[0.08em] uppercase text-[#6B7280]">Pipeline Status</div>
               <div className="mt-[10px] h-2 bg-[#1E1E2E] relative">
-                <div className="absolute left-0 top-0 bottom-0 bg-[#C8A96E]" style={{ width: "0%" }} />
+                <div
+                  className="absolute left-0 top-0 bottom-0 bg-[#C8A96E] transition-all duration-500"
+                  style={{ width: `${pipelineProgress.pct}%` }}
+                />
               </div>
               <div className="mt-2 flex justify-between font-mono text-[11px]">
-                <span className="text-[#6B7280]">0 of 6 agents complete</span>
-                <span className="text-[#C8A96E]">0%</span>
+                <span className="text-[#6B7280]">
+                  {pipelineProgress.done} of {pipelineProgress.total} agents complete
+                </span>
+                <span className="text-[#C8A96E]">{pipelineProgress.pct}%</span>
               </div>
             </div>
           </div>

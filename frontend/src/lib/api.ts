@@ -133,17 +133,6 @@ export async function getPipelineStatus(): Promise<PipelineStatus> {
   return apiCall<PipelineStatus>("/admin/pipeline/status");
 }
 
-/* ─── Agent runs ─── */
-export interface AgentRunStatus {
-  run_id: string;
-  celery_status: string;
-  agent_status: string | null;
-  output_data: unknown;
-  errors: string[] | null;
-  duration_ms: number | null;
-  created_at: string | null;
-}
-
 /* ─── Pipeline ─── */
 export interface PipelineRunRequest {
   company_name_or_id: string | number;
@@ -161,6 +150,39 @@ export async function runPipeline(request: PipelineRunRequest): Promise<Pipeline
     method: "POST",
     json: request,
   });
+}
+
+/* ─── Agent runs ─── */
+export interface AgentRunStatus {
+  run_id: string;
+  celery_status: string;
+  agent_status: string | null;
+  output_data: unknown;
+  errors: string[] | null;
+  duration_ms: number | null;
+  created_at: string | null;
+}
+
+export interface AgentRunLog {
+  id: number;
+  run_id: string;
+  agent_name: string;
+  status: string;
+  input_data: unknown;
+  output_data: unknown;
+  errors: string[] | null;
+  duration_ms: number | null;
+  created_at: string | null;
+}
+
+export interface AgentRunListResponse {
+  logs: AgentRunLog[];
+  total: number;
+}
+
+export async function listAgentRuns(limit: number = 50): Promise<AgentRunLog[]> {
+  const res = await apiCall<AgentRunListResponse>(`/agents/runs?limit=${limit}`);
+  return res.logs ?? [];
 }
 
 export async function getRunStatus(runId: string): Promise<AgentRunStatus> {
