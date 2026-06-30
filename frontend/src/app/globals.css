@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+/* Don't scan stale build output for class candidates — binary Turbopack
+   cache fragments inside dist/ were generating invalid CSS. */
+@source not "../../dist";
+
+@theme inline {
+  --color-background: #0A0A0F;
+  --color-foreground: #E8E8F0;
+  --color-surface: #111118;
+  --color-border: #1E1E2E;
+  --color-accent: #C8A96E;
+  --color-muted: #6B7280;
+  --color-danger: #EF4444;
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-teal: #2DD4BF;
+  --font-sans: var(--font-inter), Inter, sans-serif;
+  --font-mono: var(--font-ibm-plex-mono), 'IBM Plex Mono', monospace;
+  --font-serif: Georgia, serif;
+}
+
+@layer base {
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: #1E1E2E #0A0A0F;
+  }
+
+  ::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0A0A0F;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1E1E2E;
+    border: 2px solid #0A0A0F;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #2c2c42;
+  }
+
+  input[type="number"]::-webkit-inner-spin-button {
+    opacity: 0.35;
+  }
+
+  textarea::placeholder,
+  input::placeholder {
+    color: #4b5160;
+  }
+}
+
+@keyframes pePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@keyframes peBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@keyframes peFade {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes peScan {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+.animate-pePulse {
+  animation: pePulse 1.4s infinite;
+}
+
+.animate-peBlink {
+  animation: peBlink 1s infinite;
+}
+
+.animate-peFade {
+  animation: peFade 0.25s ease-out forwards;
+}
+
+.animate-peScan {
+  animation: peScan 2s ease-in-out infinite;
+}
+
+.font-mono {
+  font-family: var(--font-ibm-plex-mono), 'IBM Plex Mono', monospace;
+}
+
+.font-serif {
+  font-family: Georgia, serif;
+}
