@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from agents.lbo.graph import run_lbo_analysis
 from schemas.agent import AgentRunRequest
 from schemas.lbo import LBOAgentResponse
+from typing import Any
 
 router = APIRouter(prefix="/agents/lbo", tags=["lbo"])
 
