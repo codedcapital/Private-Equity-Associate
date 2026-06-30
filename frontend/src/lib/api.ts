@@ -156,8 +156,8 @@ export interface PipelineRunResponse {
   message: string;
 }
 
-export async function runPipeline(request: PipelineRunRequest): Promise<PipelineRunResponse> {
-  return apiCall<PipelineRunResponse>("/pipeline/run", {
+export async function runPipeline(request: { company_id: number; thesis?: string | null }): Promise<PipelineRunResponse> {
+  return apiCall<PipelineRunResponse>("/agents/full/run", {
     method: "POST",
     json: request,
   });
