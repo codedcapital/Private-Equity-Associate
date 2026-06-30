@@ -1,9 +1,9 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies (including WeasyPrint dependencies)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies (WeasyPrint + build tools)
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
     build-essential \
     libpango-1.0-0 \
     libpangoft2-1.0-0 \
@@ -12,10 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxml2-dev \
     libxslt1-dev \
     shared-mime-info \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy backend code
-COPY backend/ ./
+COPY . .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -e ".[dev]"
