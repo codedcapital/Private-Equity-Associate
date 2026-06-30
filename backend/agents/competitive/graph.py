@@ -10,8 +10,10 @@ Data sources:
   • Wikidata — public-company revenue, employees, industry, country (free, no key)
   • GLEIF / LEI — legal entity, jurisdiction, registration, ownership (free, no key)
   • OpenCorporates — UK/EU legal entity validation, best-effort (rate-limited)
-  • Explorium — firmographics (revenue, employee range, industry, HQ, ticker) for
-    public AND private companies (opt-in via EXPLORIUM_API_KEY; match → enrich)
+  • SEC EDGAR — firmographics (industry, HQ, exchange, ticker, revenue) for US
+    public companies (free, no key; replaces Explorium for public-co coverage)
+  • Explorium — firmographics for public AND private companies (optional, opt-in
+    via EXPLORIUM_API_KEY; match → enrich)
   • Deterministic sector fallback maps — guaranteed real competitors when APIs fail
 """
 
@@ -413,6 +415,134 @@ async def _explorium_enrich(company_name: str, domain: str | None = None) -> dic
     }
 
 
+# ── SEC EDGAR company-facts (free firmographics for public companies) ─────────
+# Replaces Explorium for US public companies using only SEC's open APIs:
+#   1. company_tickers.json  → resolve ticker/name to a CIK (cached in-process)
+#   2. submissions/CIK….json → industry (SIC), HQ address, exchange, ticker, name
+#   3. companyconcept XBRL    → latest annual revenue (best-effort)
+# No API key required; SEC only asks for a descriptive User-Agent.
+
+_SEC_TICKER_CACHE: list[dict[str, Any]] | None = None
+_SEC_TICKER_LOCK = asyncio.Lock()
+
+
+def _norm_company(name: str) -> str:
+    """Normalise a company name for fuzzy matching (drop suffixes/punctuation)."""
+    import re
+
+    n = name.lower()
+    n = re.sub(r"[.,]", " ", n)
+    n = re.sub(
+        r"\b(inc|incorporated|corp|corporation|co|ltd|limited|llc|plc|holdings|"
+        r"group|the|company|nv|sa|ag|holding)\b",
+        " ",
+        n,
+    )
+    return re.sub(r"\s+", " ", n).strip()
+
+
+async def _sec_ticker_records(client: httpx.AsyncClient) -> list[dict[str, Any]]:
+    """Fetch and cache SEC's ticker→CIK map as a list of records."""
+    global _SEC_TICKER_CACHE
+    if _SEC_TICKER_CACHE is not None:
+        return _SEC_TICKER_CACHE
+    async with _SEC_TICKER_LOCK:
+        if _SEC_TICKER_CACHE is not None:
+            return _SEC_TICKER_CACHE
+        resp = await client.get("https://www.sec.gov/files/company_tickers.json")
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        _SEC_TICKER_CACHE = list(data.values()) if isinstance(data, dict) else []
+        return _SEC_TICKER_CACHE
+
+
+async def _sec_companyfacts_enrich(
+    company_name: str, ticker: str | None = None
+) -> dict[str, Any]:
+    """Free firmographics for US public companies via SEC EDGAR.
+
+    Resolves the company to a CIK (by ticker, else fuzzy name match), then reads
+    SEC's submissions metadata for industry, HQ, exchange and ticker, plus a
+    best-effort latest annual revenue from the XBRL company-concept API. Returns
+    an empty dict (graceful fallback) when no public match is found.
+    """
+    import difflib
+
+    headers = {"User-Agent": settings.sec_user_agent, "Accept": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+            records = await _sec_ticker_records(client)
+            if not records:
+                return {}
+
+            cik: int | None = None
+            matched_ticker: str | None = None
+            if ticker:
+                for rec in records:
+                    if str(rec.get("ticker", "")).upper() == ticker.upper():
+                        cik, matched_ticker = rec["cik_str"], rec["ticker"]
+                        break
+            if cik is None:
+                target = _norm_company(company_name)
+                titles = {_norm_company(r.get("title", "")): r for r in records}
+                best = difflib.get_close_matches(target, list(titles), n=1, cutoff=0.9)
+                if best:
+                    rec = titles[best[0]]
+                    cik, matched_ticker = rec["cik_str"], rec.get("ticker")
+            if cik is None:
+                return {}
+
+            cik_str = f"{int(cik):010d}"
+            sub = await client.get(f"https://data.sec.gov/submissions/CIK{cik_str}.json")
+            if sub.status_code != 200:
+                return {}
+            s = sub.json()
+
+            addr = (s.get("addresses") or {}).get("business") or {}
+            hq = ", ".join(
+                p for p in [addr.get("city"), addr.get("stateOrCountry")] if p
+            ) or None
+            exchanges = s.get("exchanges") or []
+
+            result: dict[str, Any] = {
+                "source": "sec_edgar",
+                "cik": cik_str,
+                "industry": s.get("sicDescription"),
+                "headquarters": hq,
+                "ticker": matched_ticker or (s.get("tickers") or [None])[0],
+                "exchange": exchanges[0] if exchanges else None,
+                "legal_name": s.get("name"),
+            }
+
+            # Best-effort latest annual revenue from XBRL (try common concepts).
+            for concept in (
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+                "SalesRevenueNet",
+            ):
+                try:
+                    cc = await client.get(
+                        f"https://data.sec.gov/api/xbrl/companyconcept/"
+                        f"CIK{cik_str}/us-gaap/{concept}.json"
+                    )
+                    if cc.status_code != 200:
+                        continue
+                    units = (cc.json().get("units") or {}).get("USD") or []
+                    annual = [u for u in units if u.get("form") == "10-K" and u.get("fp") == "FY"]
+                    if annual:
+                        latest = max(annual, key=lambda u: u.get("end", ""))
+                        result["revenue"] = latest.get("val")
+                        break
+                except Exception:
+                    continue
+
+            return result
+    except Exception as exc:
+        logger.debug("SEC EDGAR enrichment failed for %s: %s", company_name, exc)
+        return {}
+
+
 async def _enrich_competitor(competitor: dict[str, Any]) -> dict[str, Any]:
     """Run all free enrichment APIs in parallel and merge results into competitor dict."""
     name = competitor.get("name", "")
@@ -420,10 +550,17 @@ async def _enrich_competitor(competitor: dict[str, Any]) -> dict[str, Any]:
         return competitor
 
     # Run all enrichment calls concurrently. Each returns {} on failure.
-    wikidata_result, opencorporates_result, gleif_result, explorium_result = await asyncio.gather(
+    (
+        wikidata_result,
+        opencorporates_result,
+        gleif_result,
+        sec_result,
+        explorium_result,
+    ) = await asyncio.gather(
         _wikidata_enrich(name),
         _opencorporates_enrich(name, competitor.get("hq_location")),
         _gleif_enrich(name),
+        _sec_companyfacts_enrich(name, competitor.get("ticker")),
         _explorium_enrich(name, competitor.get("domain")),
     )
 
@@ -460,6 +597,21 @@ async def _enrich_competitor(competitor: dict[str, Any]) -> dict[str, Any]:
             if hq:
                 competitor["hq_location"] = hq
 
+    # Merge SEC EDGAR (free firmographics for US public companies)
+    if sec_result:
+        if sec_result.get("cik"):
+            competitor["sec_cik"] = sec_result["cik"]
+        if sec_result.get("industry") and not competitor.get("industry"):
+            competitor["industry"] = sec_result["industry"]
+        if sec_result.get("headquarters") and not competitor.get("hq_location"):
+            competitor["hq_location"] = sec_result["headquarters"]
+        if sec_result.get("ticker") and not competitor.get("ticker"):
+            competitor["ticker"] = sec_result["ticker"]
+        if sec_result.get("exchange"):
+            competitor["exchange"] = sec_result["exchange"]
+        if sec_result.get("revenue") and not competitor.get("revenue"):
+            competitor["revenue"] = sec_result["revenue"]
+
     # Merge Explorium (firmographics: employee range, revenue, industry, HQ — incl. private cos)
     if explorium_result:
         if explorium_result.get("business_id"):
@@ -489,6 +641,8 @@ async def _enrich_competitor(competitor: dict[str, Any]) -> dict[str, Any]:
         sources.append("opencorporates")
     if gleif_result:
         sources.append("gleif")
+    if sec_result:
+        sources.append("sec_edgar")
     if explorium_result:
         sources.append("explorium")
     competitor["enrichment_sources"] = list(set(sources))

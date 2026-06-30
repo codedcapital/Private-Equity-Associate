@@ -150,6 +150,42 @@ Keep the Redis URL handy.
 - **Backend runs out of memory** (Render free is 512 MB; the API + Celery worker share it): in Render env vars set `RUN_CELERY_WORKER=0` to drop the worker. The UI still works, but background agent jobs won't process until you run a worker elsewhere or upgrade the instance.
 - **AI features error:** confirm `OPENAI_API_KEY` is set on Render and the OpenAI account has billing/credit.
 
+## Seeding demo data (make it investor-ready)
+
+The app ships empty. To populate it with a realistic investment universe — 66 real
+public companies across sectors, three years of financials each, deals spread
+across all five pipeline stages, LBO metrics on the underwritten deals, and two
+full IC memos — use the built-in seeder. It needs no OpenAI and no external APIs.
+
+Because Render's **free tier has no Shell/One-Off Jobs**, trigger it over HTTP:
+
+1. On Render → backend service → **Environment**, add a variable:
+   ```
+   SEED_TOKEN = <any-random-string-you-choose>
+   ```
+   Save (the service redeploys).
+2. Open your backend's API docs: `https://<your-backend>.onrender.com/docs`
+3. Find **POST `/admin/seed-demo`** → **Try it out** → set `token` to your
+   `SEED_TOKEN` value → **Execute**. (First call may take ~50s while the free
+   instance wakes up.)
+4. It returns `{"status":"ok","companies":66,"deals":66}`. Refresh the frontend —
+   the pipeline board is now full.
+
+Re-running is safe (it skips what already exists). To wipe and reseed, set the
+`reset` parameter to `true`.
+
+> Prefer the command line? You can instead run `python seed_demo.py` from the
+> `backend/` directory locally with `DATABASE_URL` pointed at your Supabase
+> session-pooler URL — same result.
+
+## Replacing Explorium
+
+Explorium (paid) is no longer required. The competitive agent now enriches
+companies from **SEC EDGAR** (free, no key) for US public companies — industry,
+HQ, exchange, ticker, and latest annual revenue — alongside the existing free
+Wikidata, GLEIF, and OpenCorporates sources. Explorium remains optional and is
+only used if `EXPLORIUM_API_KEY` is set; you can leave it unset.
+
 ## Cost summary
 
 Everything is free except **OpenAI usage** (a few dollars of pay-as-you-go). Render/Supabase/Upstash/Vercel free tiers cover the rest for demo-level traffic.

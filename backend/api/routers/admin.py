@@ -8,12 +8,13 @@ Endpoints:
     GET    /admin/pipeline/status — Daily pipeline execution summary
 """
 
+import os
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from sqlalchemy import func, select
 
-from db.models import AgentLog, AgentStatus, Company, Filing, FilingChunk, Financial
+from db.models import AgentLog, AgentStatus, Company, Deal, Filing, FilingChunk, Financial
 from db.session import async_session_factory
 from ingest.scheduler import _last_run_utc, run_nightly_ingestion
 from schemas.agent import BulkIngestRequest, BulkIngestResponse, PipelineStatusRead
@@ -137,3 +138,37 @@ async def pipeline_status() -> PipelineStatusRead:
         total_cost_today=round(float(total_cost or 0.0), 2),
         total_tokens_today=int(total_tokens or 0),
     )
+
+
+@router.post("/seed-demo")
+async def seed_demo_endpoint(
+    token: str = Query(..., description="Must match the SEED_TOKEN env var."),
+    reset: bool = Query(False, description="Delete existing demo data first."),
+) -> dict:
+    """One-shot demo data seeder (token-guarded).
+
+    Populates the database with a realistic investment universe (60+ companies,
+    financials, deals across all stages, and IC memos) so the app is
+    investor-ready. Designed for hosts without shell access (e.g. Render free
+    tier): trigger it once with a POST, then it's safe to ignore.
+
+    Protected by the ``SEED_TOKEN`` environment variable — set it on the host and
+    pass the same value as ``?token=``. Returns 403 on mismatch, 503 if unset.
+    """
+    expected = os.getenv("SEED_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="SEED_TOKEN is not configured on the server.")
+    if token != expected:
+        raise HTTPException(status_code=403, detail="Invalid seed token.")
+
+    from seed_demo import _reset_demo, seed
+
+    if reset:
+        await _reset_demo()
+    await seed(force=reset)
+
+    async with async_session_factory() as session:
+        companies = await session.scalar(select(func.count(Company.id)))
+        deals = await session.scalar(select(func.count(Deal.id)))
+
+    return {"status": "ok", "companies": companies, "deals": deals}
