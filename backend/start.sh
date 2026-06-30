@@ -13,7 +13,8 @@ alembic upgrade head
 #
 # Set RUN_CELERY_WORKER=0 to disable the in-container worker (e.g. if you
 # run a dedicated worker elsewhere, or want to save memory).
-if [ "${RUN_CELERY_WORKER:-1}" = "1" ]; then
+# Only auto-start Celery if REDIS_URL is actually configured.
+if [ "${RUN_CELERY_WORKER:-1}" = "1" ] && [ -n "${REDIS_URL:-}" ]; then
   echo "🛠  Starting in-container Celery worker..."
   celery -A core.celery_app worker --loglevel=info --concurrency=1 &
 fi
