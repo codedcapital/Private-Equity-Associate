@@ -6,7 +6,7 @@ const BASE_URL =
     ? "https://your-api-domain.com"
     : "http://localhost:8000");
 
-const api = ky.create({ prefixUrl: BASE_URL, timeout: 30000 });
+const api = ky.create({ baseUrl: BASE_URL, timeout: 30000 });
 
 async function apiCall<T>(url: string, opts?: any): Promise<T> {
   const res = await api(url, opts);
