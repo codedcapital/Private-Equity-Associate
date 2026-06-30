@@ -131,13 +131,18 @@ def _build_financials(revenue: float, margin: float, growth: float, leverage: fl
 
     Revenue is grown forward from a base; all derived metrics are computed so the
     dashboard, deal pages, and charts render real-looking trends.
+    
+    Values are stored in DOLLARS (same unit as yfinance) to match the frontend
+    expectation that divides by 1e6 for display in $M.
     """
     years = [date(2023, 12, 31), date(2024, 12, 31), date(2025, 12, 31)]
     rows: list[dict] = []
     prev_rev: float | None = None
     for i, rpt in enumerate(years):
         # Scale revenue so the latest year matches the curated figure.
-        rev = revenue * ((1 + growth) ** (i - 2))
+        # Input revenue is in $M; convert to dollars for DB storage.
+        rev_m = revenue * ((1 + growth) ** (i - 2))
+        rev = rev_m * 1e6
         ebitda = rev * margin
         net_debt = max(leverage * ebitda, 0.0) if ebitda > 0 else leverage * abs(ebitda)
         total_debt = net_debt + max(0.15 * rev, 0.0)
@@ -193,12 +198,13 @@ def _lbo_economics(stage: DealStage, latest: dict) -> dict:
 
 def _memo_sections(name: str, sector: str, latest: dict, econ: dict) -> dict:
     """A full, realistic IC memo (no LLM needed)."""
-    rev = latest["revenue"]
-    ebitda = latest["ebitda"]
+    rev = latest["revenue"] / 1e6  # convert dollars → $M for display
+    ebitda = latest["ebitda"] / 1e6
     margin = latest["ebitda_margin"]
     irr = econ.get("lbo_irr", 0.22)
     moic = econ.get("lbo_moic", 2.4)
-    mult = round(econ.get("entry_ev", ebitda * 13) / ebitda, 1) if ebitda else 13.0
+    mult = round(econ.get("entry_ev", latest["ebitda"] * 13) / latest["ebitda"], 1) if latest["ebitda"] else 13.0
+    entry_ev_m = econ.get("entry_ev", latest["ebitda"] * 13) / 1e6
     return {
         "Executive Summary": (
             f"We recommend proceeding with an investment in {name}, a leading operator in "
@@ -223,10 +229,10 @@ def _memo_sections(name: str, sector: str, latest: dict, econ: dict) -> dict:
             f"Latest-year revenue of ${rev:,.0f}M with a {margin*100:.0f}% EBITDA margin. The "
             f"business converts EBITDA to free cash flow at an attractive rate, and net leverage "
             f"is manageable, supporting a conventional buyout capital structure of ~"
-            f"{econ.get('entry_ev', ebitda*13)/ebitda*0.5:.1f}x net debt at entry."
+            f"{econ.get('entry_ev', latest['ebitda']*13)/latest['ebitda']*0.5:.1f}x net debt at entry."
         ),
         "Valuation": (
-            f"Entry enterprise value of ${econ.get('entry_ev', ebitda*13):,.0f}M ({mult:.1f}x "
+            f"Entry enterprise value of ${entry_ev_m:,.0f}M ({mult:.1f}x "
             f"EBITDA). We assume modest multiple compression at exit, with returns driven "
             f"primarily by EBITDA growth and de-levering. Base case: {irr*100:.0f}% IRR / "
             f"{moic:.1f}x MOIC."
