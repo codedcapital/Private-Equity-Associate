@@ -90,8 +90,12 @@ def create_initial_state(company_name: str, company_id: int | None = None) -> De
 
 def _deal_state_encoder(obj: object) -> object:
     """Custom JSON encoder helper for DealState objects."""
+    import dataclasses as _dc
+
     if isinstance(obj, FinancialProfile):
         return obj.model_dump(mode="json")
+    if _dc.is_dataclass(obj) and not isinstance(obj, type):
+        return _dc.asdict(obj)
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 

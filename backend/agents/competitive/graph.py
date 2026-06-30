@@ -940,8 +940,65 @@ Fields to extract:
 Return ONLY valid JSON."""
 
 
+async def _extract_single_profile(
+    comp: dict[str, Any],
+    target_name: str,
+    sector: str,
+    llm: LLMClient,
+) -> tuple[str, dict[str, Any]]:
+    """Build a detailed profile for one competitor via LLM."""
+    name = comp["name"]
+    context_parts = []
+    if comp.get("domain"):
+        context_parts.append(f"domain: {comp['domain']}")
+    if comp.get("funding_stage"):
+        context_parts.append(f"funding: {comp['funding_stage']}")
+    if comp.get("hq_location"):
+        context_parts.append(f"HQ: {comp['hq_location']}")
+    if comp.get("employees"):
+        context_parts.append(f"employees: {comp['employees']}")
+    if comp.get("revenue"):
+        context_parts.append(f"revenue: {comp['revenue']}")
+    if comp.get("industry"):
+        context_parts.append(f"industry: {comp['industry']}")
+    if comp.get("company_size"):
+        context_parts.append(f"company_size: {comp['company_size']}")
+    if comp.get("tavily_snippet"):
+        context_parts.append(f"web_snippet: {comp['tavily_snippet']}")
+    context = "; ".join(context_parts) if context_parts else "No additional context"
+
+    user_prompt = _USER_PROMPT_PROFILE_TEMPLATE.format(
+        name=name, sector=sector, context=context, target_name=target_name
+    )
+
+    try:
+        parsed = await llm.chat_structured(
+            system_prompt=_SYSTEM_PROMPT_PROFILE,
+            user_prompt=user_prompt,
+            response_model=CompetitorProfile,
+        )
+        return name, parsed.model_dump()
+    except Exception as exc:
+        logger.warning("LLM profile extraction failed for %s: %s", name, exc)
+        # Fallback profile so the graph continues
+        return name, {
+            "business_model": "Unknown",
+            "pricing": "Unknown",
+            "segment": "Unknown",
+            "geography": comp.get("hq_location", "Unknown"),
+            "funding": comp.get("funding_stage", "Unknown"),
+            "key_differentiators": "Unknown",
+            "revenue": "Unknown",
+            "employees": "Unknown",
+        }
+
+
 async def extract_profiles(state: DealState) -> DealState:
-    """Node 2: For each verified competitor, build a detailed profile using LLM."""
+    """Node 2: For each verified competitor, build a detailed profile using LLM.
+
+    All LLM calls run concurrently via asyncio.gather to avoid sequential
+    timeout when profiling 5-8 competitors.
+    """
     competitors = state.get("competitors", [])
     if not competitors:
         state["errors"] = state.get("errors", []) + ["No competitors to profile"]
@@ -949,55 +1006,21 @@ async def extract_profiles(state: DealState) -> DealState:
 
     target_name = state.get("company_name", "the target")
     sector = state.get("sector", "")
-    profiles: dict[str, dict[str, Any]] = {}
 
     llm = LLMClient()
 
-    for comp in competitors:
-        name = comp["name"]
-        context_parts = []
-        if comp.get("domain"):
-            context_parts.append(f"domain: {comp['domain']}")
-        if comp.get("funding_stage"):
-            context_parts.append(f"funding: {comp['funding_stage']}")
-        if comp.get("hq_location"):
-            context_parts.append(f"HQ: {comp['hq_location']}")
-        if comp.get("employees"):
-            context_parts.append(f"employees: {comp['employees']}")
-        if comp.get("revenue"):
-            context_parts.append(f"revenue: {comp['revenue']}")
-        if comp.get("industry"):
-            context_parts.append(f"industry: {comp['industry']}")
-        if comp.get("company_size"):
-            context_parts.append(f"company_size: {comp['company_size']}")
-        if comp.get("tavily_snippet"):
-            context_parts.append(f"web_snippet: {comp['tavily_snippet']}")
-        context = "; ".join(context_parts) if context_parts else "No additional context"
+    # Cap at 6 competitors to stay within API timeout budgets
+    capped_competitors = competitors[:6]
 
-        user_prompt = _USER_PROMPT_PROFILE_TEMPLATE.format(
-            name=name, sector=sector, context=context, target_name=target_name
-        )
+    tasks = [
+        _extract_single_profile(comp, target_name, sector, llm)
+        for comp in capped_competitors
+    ]
+    results = await asyncio.gather(*tasks)
 
-        try:
-            parsed = await llm.chat_structured(
-                system_prompt=_SYSTEM_PROMPT_PROFILE,
-                user_prompt=user_prompt,
-                response_model=CompetitorProfile,
-            )
-            profiles[name] = parsed.model_dump()
-        except Exception as exc:
-            logger.warning("LLM profile extraction failed for %s: %s", name, exc)
-            # Fallback profile so the graph continues
-            profiles[name] = {
-                "business_model": "Unknown",
-                "pricing": "Unknown",
-                "segment": "Unknown",
-                "geography": comp.get("hq_location", "Unknown"),
-                "funding": comp.get("funding_stage", "Unknown"),
-                "key_differentiators": "Unknown",
-                "revenue": "Unknown",
-                "employees": "Unknown",
-            }
+    profiles: dict[str, dict[str, Any]] = {}
+    for name, profile in results:
+        profiles[name] = profile
 
     state["competitor_profiles"] = profiles
     return state

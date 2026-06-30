@@ -6,12 +6,14 @@ Four-node async graph:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 
 from langgraph.graph import END, StateGraph
 from sqlalchemy import select
 
-from agents.state import DealState, create_initial_state
+from agents.state import DealState, LBOResult as StateLBOResult, create_initial_state
+from core.config import settings
 from core.lbo_engine import LBOInputs, run_lbo, sensitivity_grid
 from core.llm import LLMClient
 from core.prompts import PROMPT_LBO_INTERPRET
@@ -137,9 +139,9 @@ async def prepare_inputs(state: DealState) -> DealState:
     bear_inputs = _build_scenario_inputs(entry_ebitda, entry_multiple, overrides, bear_defaults)
 
     state["lbo_scenarios"] = {
-        "base": base_inputs,
-        "bull": bull_inputs,
-        "bear": bear_inputs,
+        "base": dataclasses.asdict(base_inputs),
+        "bull": dataclasses.asdict(bull_inputs),
+        "bear": dataclasses.asdict(bear_inputs),
     }
 
     return state
@@ -154,12 +156,17 @@ async def run_model(state: DealState) -> DealState:
         state["errors"] = state.get("errors", []) + ["No LBO scenarios prepared"]
         return state
 
-    lbo_results: dict[str, object] = {}
+    lbo_results: dict[str, dict] = {}
 
-    for name, inputs in scenarios.items():
+    for name, inputs_data in scenarios.items():
+        # Reconstruct LBOInputs if it's a dict (from resumed state)
+        if isinstance(inputs_data, dict):
+            inputs = LBOInputs(**inputs_data)
+        else:
+            inputs = inputs_data
         try:
             result = run_lbo(inputs)
-            lbo_results[name] = result
+            lbo_results[name] = dataclasses.asdict(result)
         except Exception as exc:
             state["errors"] = state.get("errors", []) + [
                 f"LBO run failed for {name}: {exc}"
@@ -197,6 +204,8 @@ async def generate_sensitivity(state: DealState) -> DealState:
         return state
 
     base_inputs = scenarios["base"]
+    if isinstance(base_inputs, dict):
+        base_inputs = LBOInputs(**base_inputs)
 
     try:
         grid = sensitivity_grid(
@@ -230,6 +239,12 @@ async def interpret(state: DealState) -> DealState:
     bull = lbo_results.get("bull")
     bear = lbo_results.get("bear")
 
+    # Normalise dict / dataclass access
+    def _get(attr: str, obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(attr)
+        return getattr(obj, attr, None)
+
     if not base:
         state["errors"] = state.get("errors", []) + [
             "No base LBO result to interpret"
@@ -238,14 +253,14 @@ async def interpret(state: DealState) -> DealState:
 
     parts = []
     parts.append(
-        f"Base scenario: Entry equity ${base.entry_equity:.1f}M, "
-        f"Exit equity ${base.exit_equity:.1f}M, IRR {base.irr:.1%}, MOIC {base.moic:.2f}x"
+        f"Base scenario: Entry equity ${_get('entry_equity', base):.1f}M, "
+        f"Exit equity ${_get('exit_equity', base):.1f}M, IRR {_get('irr', base):.1%}, MOIC {_get('moic', base):.2f}x"
     )
 
     if bull:
-        parts.append(f"Bull scenario: IRR {bull.irr:.1%}, MOIC {bull.moic:.2f}x")
+        parts.append(f"Bull scenario: IRR {_get('irr', bull):.1%}, MOIC {_get('moic', bull):.2f}x")
     if bear:
-        parts.append(f"Bear scenario: IRR {bear.irr:.1%}, MOIC {bear.moic:.2f}x")
+        parts.append(f"Bear scenario: IRR {_get('irr', bear):.1%}, MOIC {_get('moic', bear):.2f}x")
 
     if sensitivity:
         grid = sensitivity["grid"]
