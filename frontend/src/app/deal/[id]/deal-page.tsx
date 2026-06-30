@@ -161,7 +161,7 @@ export default function DealPage({ id }: { id: string }) {
     }
     setPipelineRun({ runId: null, status: "running", polling: true });
     try {
-      const res = await runPipeline({ company_id: companyId });
+      const res = await runPipeline({ company_name_or_id: companyId });
       setPipelineRun({ runId: res.run_id, status: "running", polling: true });
       addToast("info", "Pipeline started", `Run ${res.run_id} in progress…`);
 

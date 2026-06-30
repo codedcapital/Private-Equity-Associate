@@ -21,7 +21,7 @@ Future endpoints:
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from sqlalchemy import desc, func, select
 
 from agents.orchestrator import run_full_pipeline
@@ -246,40 +246,45 @@ async def list_pipeline_runs(
 
 
 @router.post("/run", response_model=AgentRunResponse)
-async def run_pipeline(request: PipelineRunRequest) -> AgentRunResponse:
-    """Run the full deal pipeline end-to-end (direct, not Celery).
+async def run_pipeline(
+    request: PipelineRunRequest,
+    background_tasks: BackgroundTasks,
+) -> AgentRunResponse:
+    """Run the full deal pipeline end-to-end via BackgroundTasks.
 
-    Creates an AgentLog entry, executes sourcing → diligence → IC memo,
-    and returns the run_id so the client can poll for status.
+    Creates an AgentLog entry, schedules the pipeline to run in the
+    background, and returns the run_id immediately so the client can
+    poll for status via /agents/runs/{run_id}/status.
     """
     tracker = RunTracker()
     run_id = await tracker.start_run(
         agent_name="full_pipeline",
         input_data=request.model_dump(),
     )
+    await tracker.update_status(run_id=run_id, status=AgentStatus.RUNNING)
 
-    try:
-        final_state = await run_full_pipeline(
-            company_name_or_id=request.company_name_or_id,
-            thesis=request.thesis,
-            existing_run_id=run_id,
-        )
+    async def _execute_pipeline() -> None:
+        try:
+            final_state = await run_full_pipeline(
+                company_name_or_id=request.company_name_or_id,
+                thesis=request.thesis,
+                existing_run_id=run_id,
+            )
+            await tracker.update_status(
+                run_id=run_id,
+                status=AgentStatus.COMPLETE,
+                output_data={"state_json": deal_state_to_json(final_state)},
+            )
+        except Exception as exc:
+            await tracker.log_error(run_id, str(exc))
 
-        # Mark as complete
-        await tracker.update_status(
-            run_id=run_id,
-            status=AgentStatus.COMPLETE,
-            output_data={"state_json": deal_state_to_json(final_state)},
-        )
+    background_tasks.add_task(_execute_pipeline)
 
-        return AgentRunResponse(
-            run_id=run_id,
-            status=AgentStatusSchema.COMPLETE,
-            message="Pipeline completed successfully",
-        )
-    except Exception as exc:
-        await tracker.log_error(run_id, str(exc))
-        raise HTTPException(status_code=500, detail=str(exc))
+    return AgentRunResponse(
+        run_id=run_id,
+        status=AgentStatusSchema.RUNNING,
+        message="Pipeline started — poll /agents/runs/{run_id}/status for progress",
+    )
 
 
 @router.get("/resume/{run_id}", response_model=AgentRunResponse)
