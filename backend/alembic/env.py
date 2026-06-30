@@ -1,10 +1,31 @@
 from logging.config import fileConfig
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import create_engine, pool
 
 from alembic import context
 from core.config import settings
 from db.models import Base
+
+
+def _strip_unsupported_params(url: str) -> str:
+    """Remove query params the Postgres drivers reject (e.g. ``pgbouncer``).
+
+    Supabase's pooler connection strings append ``?pgbouncer=true``, which
+    psycopg2 and asyncpg don't understand. Strip it so migrations connect with
+    either the direct or pooled connection string.
+    """
+    parts = urlsplit(url)
+    if not parts.query:
+        return url
+    kept = [
+        (k, v)
+        for k, v in parse_qsl(parts.query, keep_blank_values=True)
+        if k.lower() != "pgbouncer"
+    ]
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(kept), parts.fragment)
+    )
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -26,7 +47,7 @@ def _sync_database_url() -> str:
     the single source of truth for DB credentials — nothing is duplicated in
     ``alembic.ini`` (its ``sqlalchemy.url`` is intentionally ignored here).
     """
-    url = settings.database_url
+    url = _strip_unsupported_params(settings.database_url)
     if "+asyncpg" in url:
         return url.replace("+asyncpg", "+psycopg2")
     if url.startswith("postgresql://"):

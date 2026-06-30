@@ -1,0 +1,26 @@
+# --- Python / backend ---
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/*.log
+
+# --- Frontend (not part of the backend image) ---
+frontend/
+
+# --- VCS / tooling ---
+.git/
+.gitignore
+**/.DS_Store
+
+# --- Local env files (set vars in the host dashboard instead) ---
+**/.env
+**/.env.local
+
+# --- Misc local artifacts ---
+outputs/
+data/
+**/*.md
+!backend/README.md
