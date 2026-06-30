@@ -181,12 +181,12 @@ async def run_model(state: DealState) -> DealState:
         from agents.state import LBOResult as StateLBOResult
 
         state["lbo_result"] = StateLBOResult(
-            entry_equity=base_result.entry_equity,
-            entry_debt=base_result.entry_debt,
-            irr=base_result.irr,
-            moic=base_result.moic,
-            exit_ev=base_result.exit_ev,
-            exit_equity=base_result.exit_equity,
+            entry_equity=base_result.get("entry_equity"),
+            entry_debt=base_result.get("entry_debt"),
+            irr=base_result.get("irr"),
+            moic=base_result.get("moic"),
+            exit_ev=base_result.get("exit_ev"),
+            exit_equity=base_result.get("exit_equity"),
         )
 
     return state
