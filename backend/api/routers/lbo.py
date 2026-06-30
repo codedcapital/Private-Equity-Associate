@@ -50,15 +50,21 @@ async def run_lbo(request: AgentRunRequest) -> dict:
     lbo_results = final_state.get("lbo_results")
     if lbo_results:
         for name, result in lbo_results.items():
+            # Handle both dict (from graph) and dataclass (legacy)
+            def _r(attr: str) -> Any:
+                if isinstance(result, dict):
+                    return result.get(attr)
+                return getattr(result, attr, None)
+
             response["scenarios"][name] = {
-                "entry_equity": result.entry_equity,
-                "entry_debt": result.entry_debt,
-                "irr": result.irr,
-                "moic": result.moic,
-                "exit_ev": result.exit_ev,
-                "exit_equity": result.exit_equity,
-                "debt_schedule": result.debt_schedule,
-                "ebitda_projection": result.ebitda_projection,
+                "entry_equity": _r("entry_equity"),
+                "entry_debt": _r("entry_debt"),
+                "irr": _r("irr"),
+                "moic": _r("moic"),
+                "exit_ev": _r("exit_ev"),
+                "exit_equity": _r("exit_equity"),
+                "debt_schedule": _r("debt_schedule"),
+                "ebitda_projection": _r("ebitda_projection"),
             }
 
     return response
@@ -87,15 +93,21 @@ async def get_lbo(company_id: int) -> dict:
     lbo_results = final_state.get("lbo_results")
     if lbo_results:
         for name, result in lbo_results.items():
+            # Handle both dict (from graph) and dataclass (legacy)
+            def _r(attr: str) -> Any:
+                if isinstance(result, dict):
+                    return result.get(attr)
+                return getattr(result, attr, None)
+
             response["scenarios"][name] = {
-                "entry_equity": result.entry_equity,
-                "entry_debt": result.entry_debt,
-                "irr": result.irr,
-                "moic": result.moic,
-                "exit_ev": result.exit_ev,
-                "exit_equity": result.exit_equity,
-                "debt_schedule": result.debt_schedule,
-                "ebitda_projection": result.ebitda_projection,
+                "entry_equity": _r("entry_equity"),
+                "entry_debt": _r("entry_debt"),
+                "irr": _r("irr"),
+                "moic": _r("moic"),
+                "exit_ev": _r("exit_ev"),
+                "exit_equity": _r("exit_equity"),
+                "debt_schedule": _r("debt_schedule"),
+                "ebitda_projection": _r("ebitda_projection"),
             }
 
     return response
