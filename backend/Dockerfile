@@ -16,7 +16,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy backend code
-COPY . .
+COPY backend/ ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -e ".[dev]"
