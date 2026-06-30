@@ -182,6 +182,14 @@ export default function DealPage({ id }: { id: string }) {
     }));
   }, []);
 
+  /* Sync pipeline run status with data availability — stop polling when all data is loaded */
+  useEffect(() => {
+    if (pipelineProgress.pct === 100 && pipelineRun.polling && pipelineRun.runId) {
+      setPipelineRun((prev) => ({ ...prev, status: "complete", polling: false }));
+      fetchAgentRuns();
+    }
+  }, [pipelineProgress.pct, pipelineRun.polling, pipelineRun.runId, fetchAgentRuns]);
+
   /* Run full pipeline */
   const handleRunPipeline = async () => {
     const companyId = dealData?.company_id;
@@ -327,6 +335,20 @@ export default function DealPage({ id }: { id: string }) {
       stage: dealData.stage?.toUpperCase() ?? "",
     };
   }, [dealData, id]);
+
+  /* Extract company name from a run's input_data for display */
+  const getRunCompanyName = useCallback((run: AgentRunLog): string => {
+    const input = (run.input_data || {}) as Record<string, unknown>;
+    const cname = input.company_name_or_id;
+    if (typeof cname === "string" && isNaN(Number(cname))) {
+      return cname;
+    }
+    const cid = input.company_id || input.company_name_or_id;
+    if (String(cid) === String(dealData?.company_id) && activeDeal.name && activeDeal.name !== "Loading…") {
+      return activeDeal.name;
+    }
+    return `Company ${cid}`;
+  }, [dealData?.company_id, activeDeal.name]);
 
   /* Derived metrics from real financials */
   const metrics = useMemo(() => {
@@ -948,10 +970,10 @@ export default function DealPage({ id }: { id: string }) {
                     <div>
                       <div className="font-mono text-[10px] text-[#E8E8F0]">
                         {run.agent_name} <span className="text-[#4b5160]">·</span>{" "}
-                        <span className="text-[#C8A96E]">{run.run_id.slice(0, 8)}</span>
+                        <span className="text-[#C8A96E]">{getRunCompanyName(run)}</span>
                       </div>
                       <div className="font-mono text-[9px] text-[#6B7280] mt-[2px]">
-                        {run.created_at ? new Date(run.created_at).toLocaleString() : "—"}
+                        {run.run_id.slice(0, 8)} · {run.created_at ? new Date(run.created_at).toLocaleString() : "—"}
                       </div>
                     </div>
                     <span
