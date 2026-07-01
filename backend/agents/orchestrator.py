@@ -348,6 +348,22 @@ async def memo_node(state: DealState) -> dict[str, Any]:
                 if deal:
                     await update_deal(session, deal.id, memo_id=memo.id)
 
+        # ── Write to Intelligence Hub ─────────────────────────────────────
+        try:
+            from services.intelligence_hub_writer import write_hub_from_research_state
+            await write_hub_from_research_state(
+                company_id=company_id,
+                research=state.get("research"),
+                financials=state.get("financials"),
+                competitive_map=state.get("competitive_map"),
+                competitors=state.get("competitors"),
+                lbo_result=state.get("lbo_result"),
+                risk_flags=state.get("risk_flags"),
+                interpretation=state.get("interpretation"),
+            )
+        except Exception as hub_exc:
+            logger.warning("Failed to write full pipeline to Intelligence Hub: %s", hub_exc)
+
         await _checkpoint_after_node(state, updates)
         return updates
     except Exception as exc:

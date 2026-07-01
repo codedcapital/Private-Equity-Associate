@@ -371,6 +371,68 @@ async def synthesize(state: DealState) -> DealState:
         )
         state["research"] = placeholder.model_dump(mode="json")
 
+    # ── Write to Intelligence Hub ───────────────────────────────────────
+    try:
+        from services.intelligence_hub_writer import HubWriter
+        writer = HubWriter(
+            company_id=state.get("company_id"),
+            deal_id=state.get("deal_id"),
+        )
+        await writer.ensure_hub()
+        research_data = state.get("research", {})
+        if research_data:
+            # Growth drivers → Supporting Evidence
+            drivers = research_data.get("growth_drivers", [])
+            if drivers and isinstance(drivers, list):
+                q_text = "What evidence supports the growth thesis?"
+                await writer.add_question(
+                    category="supporting_evidence",
+                    question=q_text,
+                    answer="; ".join(drivers[:5]),
+                    confidence=0.75,
+                    sort_order=1,
+                )
+                for driver in drivers[:5]:
+                    await writer.add_evidence(
+                        question_text=q_text,
+                        text=driver,
+                        source="Research Agent",
+                        source_type="api",
+                        is_supporting=True,
+                        confidence=0.75,
+                    )
+                await writer.set_source_confidence("Research Agent", "api")
+            # Risks → Contradictory Evidence
+            risks = research_data.get("risks", [])
+            if risks and isinstance(risks, list):
+                q_text = "What evidence contradicts or risks the investment thesis?"
+                await writer.add_question(
+                    category="contradictory_evidence",
+                    question=q_text,
+                    answer="; ".join(risks[:5]),
+                    confidence=0.70,
+                    sort_order=2,
+                )
+                for risk in risks[:5]:
+                    await writer.add_evidence(
+                        question_text=q_text,
+                        text=risk,
+                        source="Research Agent",
+                        source_type="api",
+                        is_contradictory=True,
+                        confidence=0.70,
+                    )
+            # TAM/CAGR → Executive Briefing building blocks
+            briefing_parts = []
+            if research_data.get("tam"):
+                briefing_parts.append(f"Market TAM: ${research_data['tam']}B")
+            if research_data.get("cagr"):
+                briefing_parts.append(f"CAGR: {research_data['cagr']}%")
+            if briefing_parts:
+                await writer.set_executive_briefing("\n".join(briefing_parts))
+    except Exception as hub_exc:
+        logger.warning("Failed to write research to Intelligence Hub: %s", hub_exc)
+
     return state
 
 

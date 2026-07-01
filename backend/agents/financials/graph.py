@@ -199,6 +199,52 @@ async def interpret(state: DealState) -> DealState:
             "[LLM interpretation unavailable — API key not configured]"
         )
 
+    # ── Write to Intelligence Hub ───────────────────────────────────────
+    try:
+        from services.intelligence_hub_writer import HubWriter
+        writer = HubWriter(company_id=state.get("company_id"))
+        await writer.ensure_hub()
+        financials = state.get("financials")
+        risk_flags = state.get("risk_flags", [])
+        if financials:
+            fin_parts = []
+            if financials.revenue is not None:
+                fin_parts.append(f"Revenue: ${financials.revenue:,.0f}")
+            if financials.ebitda is not None:
+                fin_parts.append(f"EBITDA: ${financials.ebitda:,.0f}")
+            if financials.ebitda_margin is not None:
+                fin_parts.append(f"EBITDA Margin: {financials.ebitda_margin:.1%}")
+            if financials.net_debt_ebitda is not None:
+                fin_parts.append(f"Net Debt / EBITDA: {financials.net_debt_ebitda:.1f}x")
+            if financials.fcf_yield is not None:
+                fin_parts.append(f"FCF Yield: {financials.fcf_yield:.1%}")
+            if financials.revenue_growth is not None:
+                fin_parts.append(f"Revenue Growth: {financials.revenue_growth:.1%}")
+            if fin_parts:
+                q_text = "What does the financial profile look like?"
+                await writer.add_question(
+                    category="supporting_evidence",
+                    question=q_text,
+                    answer="\n".join(fin_parts),
+                    confidence=0.85,
+                    sort_order=3,
+                )
+                for part in fin_parts:
+                    await writer.add_evidence(
+                        question_text=q_text,
+                        text=part,
+                        source="Financial Agent",
+                        source_type="api",
+                        is_supporting=True,
+                        confidence=0.85,
+                    )
+                await writer.set_source_confidence("Financial Agent", "api")
+        # Risk flags → Remaining Diligence
+        for flag in (risk_flags or [])[:3]:
+            await writer.add_remaining_diligence(f"Validate: {flag}")
+    except Exception as hub_exc:
+        logger.warning("Failed to write financials to Intelligence Hub: %s", hub_exc)
+
     return state
 
 

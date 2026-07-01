@@ -378,3 +378,28 @@ async def run_memo_generation(company_id: int) -> DealState:
         final_state["memo_id"] = memo.id
 
     return final_state
+
+
+async def _write_memo_to_hub(state: DealState) -> None:
+    """Write memo outputs to the Intelligence Hub as the final synthesis layer."""
+    try:
+        from services.intelligence_hub_writer import write_hub_from_research_state
+        await write_hub_from_research_state(
+            company_id=state.get("company_id"),
+            research=state.get("research"),
+            financials=state.get("financials"),
+            competitive_map=state.get("competitive_map"),
+            competitors=state.get("competitors"),
+            lbo_result=state.get("lbo_result"),
+            risk_flags=state.get("risk_flags"),
+            interpretation=state.get("interpretation"),
+        )
+    except Exception as exc:
+        logger.warning("Failed to write full pipeline to Intelligence Hub: %s", exc)
+
+
+async def run_memo_generation_with_hub(company_id: int) -> DealState:
+    """Run memo generation and write to Intelligence Hub."""
+    final_state = await run_memo_generation(company_id)
+    await _write_memo_to_hub(final_state)
+    return final_state

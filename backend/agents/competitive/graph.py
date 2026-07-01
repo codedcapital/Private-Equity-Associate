@@ -1331,6 +1331,38 @@ async def assess_moat(state: DealState) -> DealState:
     state["competitive_map"]["confidence_score"] = confidence_score
     state["competitive_map"]["data_sources"] = sources
 
+    # ── Write to Intelligence Hub ───────────────────────────────────────
+    try:
+        from services.intelligence_hub_writer import HubWriter
+        writer = HubWriter(company_id=state.get("company_id"))
+        await writer.ensure_hub()
+        competitors = state.get("competitors", [])
+        if competitors and isinstance(competitors, list):
+            comp_names = [c.get("name", "Unknown") for c in competitors[:5]]
+            q_text = "Who are the key competitors?"
+            await writer.add_question(
+                category="comparable_companies",
+                question=q_text,
+                answer="Key competitors: " + ", ".join(comp_names),
+                confidence=0.80,
+                sort_order=4,
+            )
+            for comp in competitors[:5]:
+                name = comp.get("name", "Unknown")
+                diff = comp.get("key_differentiators", "")
+                text = f"{name}: {diff}" if diff else name
+                await writer.add_evidence(
+                    question_text=q_text,
+                    text=text,
+                    source="Competitive Agent",
+                    source_type="api",
+                    is_supporting=True,
+                    confidence=0.80,
+                )
+            await writer.set_source_confidence("Competitive Agent", "api")
+    except Exception as hub_exc:
+        logger.warning("Failed to write competitive analysis to Intelligence Hub: %s", hub_exc)
+
     return state
 
 

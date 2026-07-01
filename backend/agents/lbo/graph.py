@@ -287,6 +287,44 @@ async def interpret(state: DealState) -> DealState:
             "[LLM interpretation unavailable — API key not configured]"
         )
 
+    # ── Write to Intelligence Hub ───────────────────────────────────────
+    try:
+        from services.intelligence_hub_writer import HubWriter
+        writer = HubWriter(company_id=state.get("company_id"))
+        await writer.ensure_hub()
+        lbo_results = state.get("lbo_results")
+        if lbo_results and isinstance(lbo_results, dict):
+            base = lbo_results.get("base")
+            lbo_parts = []
+            if base:
+                irr = base.get("irr") if isinstance(base, dict) else getattr(base, "irr", None)
+                moic = base.get("moic") if isinstance(base, dict) else getattr(base, "moic", None)
+                if irr is not None:
+                    lbo_parts.append(f"Base IRR: {irr:.1%}")
+                if moic is not None:
+                    lbo_parts.append(f"Base MOIC: {moic:.2f}x")
+            if lbo_parts:
+                q_text = "What are the projected returns?"
+                await writer.add_question(
+                    category="supporting_evidence",
+                    question=q_text,
+                    answer="\n".join(lbo_parts),
+                    confidence=0.70,
+                    sort_order=5,
+                )
+                for part in lbo_parts:
+                    await writer.add_evidence(
+                        question_text=q_text,
+                        text=part,
+                        source="LBO Agent",
+                        source_type="api",
+                        is_supporting=True,
+                        confidence=0.70,
+                    )
+                await writer.set_source_confidence("LBO Agent", "api")
+    except Exception as hub_exc:
+        logger.warning("Failed to write LBO to Intelligence Hub: %s", hub_exc)
+
     return state
 
 
