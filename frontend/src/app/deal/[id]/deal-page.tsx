@@ -29,7 +29,7 @@ function tierBg(t: string) { return t === "green" ? "rgba(16,185,129,0.12)" : t 
 function tierBorder(t: string) { return t === "green" ? "rgba(16,185,129,0.4)" : t === "amber" ? "rgba(245,158,11,0.4)" : "rgba(239,68,68,0.4)"; }
 function irrColor(irr: number) { return irr >= 0.25 ? "#10B981" : irr >= 0.18 ? "#F59E0B" : "#EF4444"; }
 function irrBg(irr: number) { return irr >= 0.25 ? "rgba(16,185,129,0.14)" : irr >= 0.18 ? "rgba(245,158,11,0.13)" : "rgba(239,68,68,0.13)"; }
-function fmtUSD(v: number) { return "$" + v.toFixed(0) + "M"; }
+function fmtUSD(v: number) { return "$" + (v / 1e6).toFixed(1) + "M"; }
 function fmtPct(v: number) { return (v * 100).toFixed(1) + "%"; }
 
 function SkeletonBlock({ lines = 4 }: { lines?: number }) {
@@ -554,7 +554,7 @@ export default function DealPage({ id }: { id: string }) {
     if (lboData?.scenarios?.base && financialsData?.ebitda) {
       const b = lboData.scenarios.base;
       const entryEv = b.entry_ev ?? (b.entry_equity + b.entry_debt);
-      const ebitda = financialsData.ebitda / 1e6;
+      const ebitda = financialsData.ebitda;
       const entryMult = ebitda > 0 ? Math.round(entryEv / ebitda * 10) / 10 : base.entryMult;
       const debtPct = entryEv > 0 ? Math.round((b.entry_debt / entryEv) * 100) : base.debtPct;
       const hold = b.debt_schedule?.length ?? base.hold;
@@ -675,11 +675,11 @@ export default function DealPage({ id }: { id: string }) {
   /* LBO outputs — use real financials when available */
   const baseEbitda = useMemo(() => {
     const ebitda = financialsData?.ebitda;
-    return ebitda && ebitda > 0 ? ebitda / 1e6 : 1.0;
+    return ebitda && ebitda > 0 ? ebitda : 1.0;
   }, [financialsData]);
   const baseRev = useMemo(() => {
     const rev = financialsData?.revenue;
-    return rev && rev > 0 ? rev / 1e6 : 1.0;
+    return rev && rev > 0 ? rev : 1.0;
   }, [financialsData]);
 
 /* LBO outputs — use backend data when available, else fall back to local computation */

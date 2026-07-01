@@ -253,8 +253,8 @@ async def interpret(state: DealState) -> DealState:
 
     parts = []
     parts.append(
-        f"Base scenario: Entry equity ${_get('entry_equity', base):.1f}M, "
-        f"Exit equity ${_get('exit_equity', base):.1f}M, IRR {_get('irr', base):.1%}, MOIC {_get('moic', base):.2f}x"
+        f"Base scenario: Entry equity ${_get('entry_equity', base)/1e6:.1f}M, "
+        f"Exit equity ${_get('exit_equity', base)/1e6:.1f}M, IRR {_get('irr', base):.1%}, MOIC {_get('moic', base):.2f}x"
     )
 
     if bull:
