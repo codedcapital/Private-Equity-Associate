@@ -411,10 +411,10 @@ export default function ResearchPage() {
       const data = await generateIntelligenceHub(1);
       setHub(data);
       setUseDemo(false);
-      addToast({ message: "Intelligence Hub generated successfully", type: "success" });
+      addToast("success", "Intelligence Hub generated successfully");
     } catch (err) {
       console.error("Generate failed:", err);
-      addToast({ message: "Failed to generate hub. Showing demo data.", type: "error" });
+      addToast("error", "Failed to generate hub", "Showing demo data.");
       setHub(demoHub);
       setUseDemo(true);
     } finally {
