@@ -20,47 +20,34 @@ logger = logging.getLogger(__name__)
 
 
 async def load_data(state: DealState) -> DealState:
-    """Node 1: Fetch financials from DB for company_id."""
+    """Node 1: Fetch financials from live data provider (cache-first)."""
     company_id = state.get("company_id")
     if not company_id:
         state["errors"] = state.get("errors", []) + ["Missing company_id in state"]
         return state
 
-    async with async_session_factory() as session:
-        result = await session.execute(
-            select(Financial)
-            .where(Financial.company_id == company_id)
-            .order_by(Financial.report_date.desc())
-            .limit(1)
-        )
-        fin = result.scalar_one_or_none()
+    from services.data_provider import DataProvider
 
-        if not fin:
-            state["errors"] = state.get("errors", []) + [
-                f"No financials found for company_id={company_id}"
-            ]
-            return state
+    try:
+        profile = await DataProvider.get_financials(company_id)
+    except Exception as exc:
+        state["errors"] = state.get("errors", []) + [
+            f"Data provider failed for company_id={company_id}: {exc}"
+        ]
+        return state
 
-        profile = FinancialProfile(
-            revenue=fin.revenue,
-            ebitda=fin.ebitda,
-            ebitda_margin=fin.ebitda_margin,
-            revenue_growth=fin.revenue_growth,
-            net_debt=fin.net_debt,
-            net_debt_ebitda=fin.net_debt_ebitda,
-            fcf=fin.fcf,
-            fcf_yield=fin.fcf_yield,
-        )
+    if profile.revenue is None and profile.ebitda is None:
+        state["errors"] = state.get("errors", []) + [
+            f"No financials available for company_id={company_id} (ticker may be missing or YFinance fetch failed)"
+        ]
+        return state
 
-        state["financials"] = profile
+    state["financials"] = profile
     return state
 
 
 async def compute_ratios(state: DealState) -> DealState:
-    """Node 2: Pure Python ratio calculation.
-
-    Re-verifies / re-computes: ebitda_margin, net_debt_ebitda, revenue_growth, fcf_yield.
-    """
+    """Node 2: Compute derived ratios (pass-through — DataProvider already computes them)."""
     financials = state.get("financials")
     if not financials:
         state["errors"] = state.get("errors", []) + [
@@ -68,70 +55,9 @@ async def compute_ratios(state: DealState) -> DealState:
         ]
         return state
 
-    company_id = state.get("company_id")
-    if not company_id:
-        state["errors"] = state.get("errors", []) + [
-            "Missing company_id for ratio computation"
-        ]
-        return state
-
-    async with async_session_factory() as session:
-        result = await session.execute(
-            select(Financial)
-            .where(Financial.company_id == company_id)
-            .order_by(Financial.report_date.desc())
-            .limit(1)
-        )
-        fin = result.scalar_one_or_none()
-
-        if not fin:
-            state["errors"] = state.get("errors", []) + [
-                f"No financials found for company_id={company_id}"
-            ]
-            return state
-
-        revenue = fin.revenue
-        ebitda = fin.ebitda
-        total_debt = fin.total_debt
-        cash = fin.cash
-        operating_cf = fin.operating_cf
-        capex = fin.capex
-
-        # Use existing ratios if present, otherwise compute from raw fields
-        ebitda_margin = financials.ebitda_margin
-        if ebitda_margin is None and revenue and ebitda is not None:
-            ebitda_margin = ebitda / revenue
-
-        net_debt = financials.net_debt
-        if net_debt is None and total_debt is not None and cash is not None:
-            net_debt = total_debt - cash
-
-        net_debt_ebitda = financials.net_debt_ebitda
-        if net_debt_ebitda is None and net_debt is not None and ebitda is not None and ebitda != 0:
-            net_debt_ebitda = net_debt / ebitda
-
-        fcf = financials.fcf
-        if fcf is None and operating_cf is not None and capex is not None:
-            fcf = operating_cf - capex
-
-        fcf_yield = financials.fcf_yield
-        if fcf_yield is None and fcf is not None and revenue and revenue != 0:
-            fcf_yield = fcf / revenue
-
-        revenue_growth = financials.revenue_growth
-
-        updated = FinancialProfile(
-            revenue=revenue,
-            ebitda=ebitda,
-            ebitda_margin=ebitda_margin,
-            revenue_growth=revenue_growth,
-            net_debt=net_debt,
-            net_debt_ebitda=net_debt_ebitda,
-            fcf=fcf,
-            fcf_yield=fcf_yield,
-        )
-
-        state["financials"] = updated
+    # DataProvider returns FinancialProfile with all derived fields already
+    # populated (ebitda_margin, net_debt_ebitda, revenue_growth, fcf_yield).
+    state["financials"] = financials
     return state
 
 
@@ -233,12 +159,12 @@ async def interpret(state: DealState) -> DealState:
                     await writer.add_evidence(
                         question_text=q_text,
                         text=part,
-                        source="Financial Agent",
+                        source="Yahoo Finance",
                         source_type="api",
                         is_supporting=True,
                         confidence=0.85,
                     )
-                await writer.set_source_confidence("Financial Agent", "api")
+                await writer.set_source_confidence("Yahoo Finance", "api")
         # Risk flags → Remaining Diligence
         for flag in (risk_flags or [])[:3]:
             await writer.add_remaining_diligence(f"Validate: {flag}")
@@ -263,7 +189,7 @@ async def produce_evidence_module(state: DealState) -> DealState:
 
     metrics: list[EvidenceMetric] = []
     warnings: list[str] = []
-    sources: list[str] = ["Financial Agent"]
+    sources: list[str] = ["Yahoo Finance"]
 
     # Revenue CAGR
     if financials.revenue_growth is not None:
@@ -277,7 +203,7 @@ async def produce_evidence_module(state: DealState) -> DealState:
             is_supporting=growth_pct > 5,
             is_contradictory=growth_pct < 0,
             evidence_text=f"Revenue growth of {growth_pct:.1f}% indicates {'strong' if growth_pct > 10 else 'moderate' if growth_pct > 0 else 'negative'} top-line expansion.",
-            source="Financial Agent",
+            source="Yahoo Finance",
             source_type="api",
         ))
 
@@ -293,7 +219,7 @@ async def produce_evidence_module(state: DealState) -> DealState:
             is_supporting=margin_pct > 20,
             is_contradictory=margin_pct < 10,
             evidence_text=f"EBITDA margin of {margin_pct:.1f}% reflects {'strong' if margin_pct > 25 else 'reasonable' if margin_pct > 15 else 'weak'} profitability.",
-            source="Financial Agent",
+            source="Yahoo Finance",
             source_type="api",
         ))
 
@@ -308,7 +234,7 @@ async def produce_evidence_module(state: DealState) -> DealState:
             is_supporting=fcf_pct > 50,
             is_contradictory=fcf_pct < 20,
             evidence_text=f"FCF conversion of {fcf_pct:.1f}% indicates {'strong' if fcf_pct > 50 else 'adequate' if fcf_pct > 20 else 'poor'} cash generation.",
-            source="Financial Agent",
+            source="Yahoo Finance",
             source_type="api",
         ))
 
@@ -323,7 +249,7 @@ async def produce_evidence_module(state: DealState) -> DealState:
             is_supporting=leverage < 4,
             is_contradictory=leverage > 5,
             evidence_text=f"Net Debt / EBITDA of {leverage:.1f}x is {'conservative' if leverage < 3 else 'manageable' if leverage < 5 else 'elevated'}.",
-            source="Financial Agent",
+            source="Yahoo Finance",
             source_type="api",
         ))
 
@@ -340,7 +266,7 @@ async def produce_evidence_module(state: DealState) -> DealState:
                 is_supporting=roic > 0.15,
                 is_contradictory=roic < 0.05,
                 evidence_text=f"ROIC of {roic * 100:.1f}% indicates {'strong' if roic > 0.15 else 'adequate' if roic > 0.05 else 'weak'} capital returns.",
-                source="Financial Agent",
+                source="Yahoo Finance",
                 source_type="api",
             ))
         except Exception:
@@ -358,7 +284,7 @@ async def produce_evidence_module(state: DealState) -> DealState:
             is_supporting=growth > 0.05,
             is_contradictory=growth < 0,
             evidence_text=f"3-year revenue forecast of ${forecast_revenue:,.0f} assumes {growth * 100:.1f}% CAGR.",
-            source="Financial Agent",
+            source="Yahoo Finance",
             source_type="api",
         ))
 

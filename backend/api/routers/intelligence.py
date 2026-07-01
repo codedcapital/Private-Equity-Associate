@@ -807,3 +807,40 @@ async def get_decision(company_id: int) -> DecisionOutput:
                 status_code=500,
                 detail=f"Cached decision is corrupted: {exc}",
             ) from exc
+
+
+@router.post("/{company_id}/refresh-data")
+async def refresh_company_data(company_id: int) -> dict:
+    """Trigger live data fetch for a company.
+
+    Fetches fresh financials from Yahoo Finance and persists to DB.
+    Returns the newly fetched FinancialProfile.
+    """
+    from services.data_provider import DataProvider
+
+    try:
+        profile = await DataProvider.get_financials(company_id, force_refresh=True)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Data refresh failed: {exc}",
+        ) from exc
+
+    if profile.revenue is None and profile.ebitda is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No financial data available for this company (ticker may be missing or YFinance has no data).",
+        )
+
+    return {
+        "company_id": company_id,
+        "refreshed": True,
+        "revenue": profile.revenue,
+        "ebitda": profile.ebitda,
+        "ebitda_margin": profile.ebitda_margin,
+        "revenue_growth": profile.revenue_growth,
+        "net_debt": profile.net_debt,
+        "net_debt_ebitda": profile.net_debt_ebitda,
+        "fcf": profile.fcf,
+        "fcf_yield": profile.fcf_yield,
+    }
