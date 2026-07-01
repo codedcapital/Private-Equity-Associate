@@ -64,6 +64,67 @@ class AgentStatus(str, PyEnum):
     FAILED = "failed"
 
 
+class EvidenceStatus(str, PyEnum):
+    """Lifecycle status of an evidence item."""
+
+    VERIFIED = "verified"
+    NEEDS_VALIDATION = "needs_validation"
+    CONFLICTING = "conflicting"
+    UNKNOWN = "unknown"
+
+
+class InvestmentViewStatus(str, PyEnum):
+    """Status of an investment view document."""
+
+    DRAFT = "draft"
+    REVIEWED = "reviewed"
+    FINAL = "final"
+
+
+class DiligenceStatus(str, PyEnum):
+    """Status of a diligence item."""
+
+    NOT_STARTED = "not_started"
+    IN_PROGRESS = "in_progress"
+    BLOCKED = "blocked"
+    COMPLETE = "complete"
+
+
+class DiligencePriority(str, PyEnum):
+    """Priority of a diligence item."""
+
+    BLOCKER = "blocker"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class DealEventType(str, PyEnum):
+    """Types of deal events for the activity log."""
+
+    VIEW_UPDATED = "view_updated"
+    EVIDENCE_REFRESHED = "evidence_refreshed"
+    DILIGENCE_STATUS_CHANGED = "diligence_status_changed"
+    CONFIDENCE_RECALCULATED = "confidence_recalculated"
+    RECOMMENDATION_CHANGED = "recommendation_changed"
+    STAGE_CHANGED = "stage_changed"
+
+
+class ActorType(str, PyEnum):
+    """Type of actor who triggered an event."""
+
+    SYSTEM = "system"
+    USER = "user"
+
+
+class ResolutionStatus(str, PyEnum):
+    """Resolution status for an evidence conflict."""
+
+    OPEN = "open"
+    RESOLVED = "resolved"
+    OVERRIDDEN = "overridden"
+
+
 # ── Models ───────────────────────────────────────────────────────────────────
 
 
@@ -187,6 +248,13 @@ class EvidenceItem(Base):
     is_supporting: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_contradictory: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evidence_status: Mapped[EvidenceStatus] = mapped_column(
+        Enum(EvidenceStatus, name="evidence_status"),
+        nullable=False,
+        default=EvidenceStatus.VERIFIED,
+    )
+    verified_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -547,4 +615,183 @@ class MarketPulseSetting(Base):
     direction: Mapped[str | None] = mapped_column(String(10), nullable=True)  # up, down
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+# ── NEW: Investment Decision Platform Models ─────────────────────────────────
+
+
+class InvestmentView(Base):
+    """A versioned, editable investment view (the narrative thesis) for a deal."""
+
+    __tablename__ = "investment_views"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(
+        ForeignKey("deal_pipeline.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    content: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    recommendation: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    authored_by: Mapped[str] = mapped_column(String(50), nullable=False, default="system")
+    edited_by: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    status: Mapped[InvestmentViewStatus] = mapped_column(
+        Enum(InvestmentViewStatus, name="investment_view_status"),
+        nullable=False,
+        default=InvestmentViewStatus.DRAFT,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("deal_id", "version", name="uq_investment_view_deal_version"),
+    )
+
+
+class DiligenceItem(Base):
+    """An interactive diligence checklist item for a deal."""
+
+    __tablename__ = "diligence_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(
+        ForeignKey("deal_pipeline.id", ondelete="CASCADE"), nullable=False
+    )
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[DiligenceStatus] = mapped_column(
+        Enum(DiligenceStatus, name="diligence_status"),
+        nullable=False,
+        default=DiligenceStatus.NOT_STARTED,
+    )
+    assigned_to: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    due_date: Mapped[Date | None] = mapped_column(Date, nullable=True)
+    evidence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("evidence_items.id", ondelete="SET NULL"), nullable=True
+    )
+    priority: Mapped[DiligencePriority] = mapped_column(
+        Enum(DiligencePriority, name="diligence_priority"),
+        nullable=False,
+        default=DiligencePriority.MEDIUM,
+    )
+    created_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    deal: Mapped["Deal"] = relationship("Deal")
+    evidence: Mapped["EvidenceItem | None"] = relationship("EvidenceItem")
+
+
+class DealEvent(Base):
+    """Structured event log for deal activity and audit trail."""
+
+    __tablename__ = "deal_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(
+        ForeignKey("deal_pipeline.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[DealEventType] = mapped_column(
+        Enum(DealEventType, name="deal_event_type"), nullable=False
+    )
+    actor_type: Mapped[ActorType] = mapped_column(
+        Enum(ActorType, name="actor_type"), nullable=False, default=ActorType.SYSTEM
+    )
+    actor_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    event_metadata: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    deal: Mapped["Deal"] = relationship("Deal")
+
+    __table_args__ = (
+        Index("idx_deal_events_deal_time", "deal_id", desc("created_at")),
+    )
+
+
+class ConfidenceLedger(Base):
+    """Transparent breakdown of how the investment confidence score was computed."""
+
+    __tablename__ = "confidence_ledgers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(
+        ForeignKey("deal_pipeline.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    base_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    factors: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    final_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    bottlenecks: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    deal: Mapped["Deal"] = relationship("Deal")
+
+    __table_args__ = (
+        Index("idx_confidence_ledger_deal_version", "deal_id", desc("version")),
+    )
+
+
+class EvidenceConflict(Base):
+    """A conflict between two evidence items from different sources."""
+
+    __tablename__ = "evidence_conflicts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    evidence_a_id: Mapped[int] = mapped_column(
+        ForeignKey("evidence_items.id", ondelete="CASCADE"), nullable=False
+    )
+    evidence_b_id: Mapped[int] = mapped_column(
+        ForeignKey("evidence_items.id", ondelete="CASCADE"), nullable=False
+    )
+    conflict_description: Mapped[str] = mapped_column(Text, nullable=False)
+    resolution_status: Mapped[ResolutionStatus] = mapped_column(
+        Enum(ResolutionStatus, name="resolution_status"),
+        nullable=False,
+        default=ResolutionStatus.OPEN,
+    )
+    resolved_by: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    evidence_a: Mapped["EvidenceItem"] = relationship(
+        "EvidenceItem", foreign_keys=[evidence_a_id]
+    )
+    evidence_b: Mapped["EvidenceItem"] = relationship(
+        "EvidenceItem", foreign_keys=[evidence_b_id]
+    )
+
+
+class DealSettings(Base):
+    """Per-deal user-overridden settings (confidence weights, etc.)."""
+
+    __tablename__ = "deal_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(
+        ForeignKey("deal_pipeline.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    confidence_weights: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    deal: Mapped["Deal"] = relationship("Deal")
+
+    __table_args__ = (
+        Index("idx_deal_settings_deal_id", "deal_id"),
     )

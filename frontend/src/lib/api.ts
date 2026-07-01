@@ -1,4 +1,14 @@
 import ky from "ky";
+import type {
+  DealOverview,
+  InvestmentView,
+  Score,
+  EvidenceModule,
+  DiligenceItem,
+  Readiness,
+  ActivityEvent,
+  NextAction,
+} from "@/types/overview";
 
 export interface ReasoningTraceStep {
   timestamp: string;
@@ -13,7 +23,7 @@ const BASE_URL =
 
 const api = ky.create({ baseUrl: BASE_URL, timeout: 30000 });
 
-async function apiCall<T>(url: string, opts?: any): Promise<T> {
+export async function apiCall<T>(url: string, opts?: any): Promise<T> {
   const res = await api(url, opts);
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -479,4 +489,390 @@ export async function updateQuestionStatus(questionId: number, status: string, a
     method: "PATCH",
     json: { status, answer },
   });
+}
+
+/* ─── Deal Overview (New IC Pack) ─── */
+
+// Raw backend response shape from /deals/{deal_id}/overview
+export interface BackendOverviewResponse {
+  deal_id: number;
+  company: {
+    id: number;
+    name: string;
+    ticker: string | null;
+    sector: string | null;
+    geography: string | null;
+  };
+  stage: string;
+  investment_view: {
+    id: number;
+    deal_id: number;
+    version: number;
+    content: { text?: string; blocks?: any[]; sources?: string[]; generated_at?: string } | null;
+    recommendation: string | null;
+    confidence_score: number | null;
+    authored_by: string;
+    edited_by: string | null;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  } | null;
+  confidence: {
+    deal_id: number;
+    final_score: number;
+    base_score: number;
+    factors: Record<string, { weight?: number; contribution?: number; penalty?: number; status?: string }>;
+    bottlenecks: string[] | null;
+    reduced_because: string[] | null;
+  } | null;
+  evidence: {
+    id: number;
+    module_name: string;
+    text: string;
+    status: string;
+    source: string;
+    source_type: string;
+    confidence: number | null;
+    is_supporting: boolean;
+    is_contradictory: boolean;
+    created_at: string | null;
+  }[];
+  diligence: {
+    items: {
+      id: number;
+      deal_id: number;
+      category: string;
+      title: string;
+      description: string | null;
+      status: string;
+      assigned_to: string | null;
+      due_date: string | null;
+      evidence_id: number | null;
+      priority: string;
+      created_by: string | null;
+      created_at: string;
+      completed_at: string | null;
+    }[];
+    total: number;
+    complete: number;
+    open: number;
+  };
+  decision_readiness: {
+    score: number;
+    current_stage: string;
+    met: string[];
+    unmet: string[];
+    recommended_next_step: string;
+    next_stage: string | null;
+    diligence_summary: {
+      total: number;
+      complete: number;
+      open: number;
+      blockers: number;
+    };
+  } | null;
+  recent_events: {
+    id: number;
+    event_type: string;
+    actor_type: string;
+    actor_id: string | null;
+    description: string;
+    created_at: string;
+  }[];
+  financial_snapshot: Record<string, any> | null;
+  lbo: Record<string, any> | null;
+}
+
+export async function getDealOverview(dealId: number): Promise<BackendOverviewResponse> {
+  return apiCall<BackendOverviewResponse>(`/deals/${dealId}/overview`);
+}
+
+export function mapBackendToFrontend(raw: BackendOverviewResponse): DealOverview {
+  // 1. Investment View
+  const rawView = raw.investment_view;
+  const investmentView: InvestmentView | null = rawView
+    ? {
+        id: String(rawView.id),
+        content: rawView.content?.text ?? "",
+        sources: rawView.content?.sources ?? [],
+        updatedAt: rawView.updated_at,
+      }
+    : null;
+
+  // 2. Score (from confidence ledger + investment view recommendation)
+  const rawConfidence = raw.confidence;
+  const rawRecommendation = rawView?.recommendation ?? "HOLD";
+  // Map backend "PASS" to frontend "DECLINE"
+  const recommendation: "PROCEED" | "CONDITIONAL" | "DECLINE" | "HOLD" =
+    rawRecommendation === "PASS"
+      ? "DECLINE"
+      : (rawRecommendation as any) === "PROCEED" || rawRecommendation === "CONDITIONAL" || rawRecommendation === "HOLD"
+      ? (rawRecommendation as any)
+      : "HOLD";
+
+  const score: Score | null = rawConfidence
+    ? {
+        value: rawConfidence.final_score,
+        recommendation,
+        confidence: rawView?.confidence_score ?? 0,
+        breakdown: Object.entries(rawConfidence.factors ?? {}).map(([label, f]) => ({
+          label,
+          weight: (f.weight ?? 0) * 100, // backend 0.0–1.0 → frontend 0–100
+          score: (f.contribution ?? 0) + (f.penalty ?? 0), // approximate
+          contribution: f.contribution ?? 0,
+        })),
+      }
+    : null;
+
+  // 3. Evidence
+  const evidence: EvidenceModule[] = raw.evidence.map((e) => ({
+    id: String(e.id),
+    name: e.module_name || e.source,
+    status: (e.status as any) || "UNKNOWN",
+    summary: e.text,
+    sourceReference: `${e.source}${e.source_type ? ` (${e.source_type})` : ""}`,
+  }));
+
+  // 4. Diligence (flatten from { items, total, complete, open })
+  const diligence: DiligenceItem[] = raw.diligence.items.map((d) => ({
+    id: String(d.id),
+    title: d.title,
+    category: d.category,
+    owner: d.assigned_to ?? "—",
+    dueDate: d.due_date ?? "",
+    completed: d.status === "complete",
+  }));
+
+  // 5. Readiness
+  const rawReadiness = raw.decision_readiness;
+  const readiness: Readiness | null = rawReadiness
+    ? {
+        score: rawReadiness.score,
+        items: [
+          ...rawReadiness.met.map((label) => ({ label, met: true as const })),
+          ...rawReadiness.unmet.map((label) => ({ label, met: false as const })),
+        ],
+      }
+    : null;
+
+  // 6. Activity / Recent Events
+  const activity: ActivityEvent[] = raw.recent_events.map((e) => ({
+    id: String(e.id),
+    timestamp: e.created_at,
+    actor: e.actor_id ?? e.actor_type ?? "System",
+    description: e.description,
+  }));
+
+  // 7. Next Action (from recommended_next_step)
+  const nextAction: NextAction | null = rawReadiness?.recommended_next_step
+    ? {
+        id: "next-1",
+        title: rawReadiness.recommended_next_step,
+        description: rawReadiness.unmet.length > 0
+          ? `Outstanding: ${rawReadiness.unmet.slice(0, 3).join("; ")}`
+          : "All requirements met.",
+        priority: rawReadiness.unmet.length > 0 ? "high" : "medium",
+      }
+    : null;
+
+  return {
+    deal: {
+      id: String(raw.deal_id),
+      name: raw.company.name,
+      stage: raw.stage.toUpperCase(),
+      sector: raw.company.sector ?? "—",
+      hq: raw.company.geography ?? "—",
+    },
+    investmentView,
+    score,
+    evidence,
+    diligence,
+    readiness,
+    activity,
+    nextAction,
+  };
+}
+
+
+/* ─── Phase 3: Next Actions ─── */
+
+export interface NextActionItem {
+  id: string;
+  title: string;
+  description: string;
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  category: string;
+  rationale: string;
+}
+
+export interface NextActionsResponse {
+  deal_id: number;
+  actions: NextActionItem[];
+  generated_at: string;
+}
+
+export async function getNextActions(dealId: number): Promise<NextActionsResponse> {
+  return apiCall<NextActionsResponse>(`/deals/${dealId}/overview/next-actions`);
+}
+
+/* ─── Phase 3: Evidence Status Update ─── */
+
+export async function updateEvidenceStatus(
+  dealId: number,
+  evidenceId: number,
+  status: string,
+  conflictDescription?: string | null
+) {
+  return apiCall<any>(`/deals/${dealId}/overview/evidence/${evidenceId}`, {
+    method: "PATCH",
+    json: { status, conflict_description: conflictDescription },
+  });
+}
+
+/* ─── Phase 3: Evidence Conflict ─── */
+
+export async function createEvidenceConflict(
+  dealId: number,
+  evidenceId: number,
+  evidenceBId: number,
+  conflictDescription: string
+) {
+  return apiCall<any>(`/deals/${dealId}/overview/evidence/${evidenceId}/conflict`, {
+    method: "POST",
+    json: { evidence_b_id: evidenceBId, conflict_description: conflictDescription },
+  });
+}
+
+/* ─── Phase 3: Investment View Diff ─── */
+
+export interface ViewDiffResponse {
+  from_version: number;
+  to_version: number;
+  changes: { path: string; before: any; after: any }[];
+  summary: string[];
+}
+
+export async function getViewDiff(
+  dealId: number,
+  fromVersionId: number,
+  toVersionId: number
+): Promise<ViewDiffResponse> {
+  return apiCall<ViewDiffResponse>(
+    `/deals/${dealId}/overview/investment-view/diff?from_version_id=${fromVersionId}&to_version_id=${toVersionId}`
+  );
+}
+
+/* ─── Phase 3: Restore View Version ─── */
+
+export async function restoreViewVersion(dealId: number, versionId: number) {
+  return apiCall<any>(`/deals/${dealId}/overview/investment-view/${versionId}/restore`, {
+    method: "POST",
+  });
+}
+
+/* ─── Phase 3: Recent Changes ─── */
+
+export interface RecentChangeItem {
+  id: number;
+  timestamp: string;
+  event_type: string;
+  actor: string;
+  description: string;
+  metadata: any;
+}
+
+export interface RecentChangesResponse {
+  deal_id: number;
+  changes: RecentChangeItem[];
+  total: number;
+}
+
+export async function getRecentChanges(dealId: number): Promise<RecentChangesResponse> {
+  return apiCall<RecentChangesResponse>(`/deals/${dealId}/overview/recent-changes`);
+}
+
+/* ─── Phase 3: Deal Settings ─── */
+
+export interface DealSettings {
+  deal_id: number;
+  confidence_weights: Record<string, number>;
+  updated_at: string | null;
+}
+
+export async function getDealSettings(dealId: number): Promise<DealSettings> {
+  return apiCall<DealSettings>(`/deals/${dealId}/overview/settings`);
+}
+
+export async function updateDealSettings(
+  dealId: number,
+  confidenceWeights: Record<string, number> | null
+) {
+  return apiCall<DealSettings>(`/deals/${dealId}/overview/settings`, {
+    method: "PATCH",
+    json: { confidence_weights: confidenceWeights },
+  });
+}
+
+/* ─── Phase 3: Diligence (already in router from Phase 2) ─── */
+
+export interface DiligenceCreatePayload {
+  category: string;
+  title: string;
+  description?: string | null;
+  status?: string;
+  assigned_to?: string | null;
+  due_date?: string | null;
+  evidence_id?: number | null;
+  priority?: string;
+  created_by?: string | null;
+}
+
+export async function createDiligenceItem(dealId: number, payload: DiligenceCreatePayload) {
+  return apiCall<any>(`/deals/${dealId}/overview/diligence`, {
+    method: "POST",
+    json: payload,
+  });
+}
+
+export async function updateDiligenceItem(
+  dealId: number,
+  itemId: number,
+  payload: Partial<DiligenceCreatePayload>
+) {
+  return apiCall<any>(`/deals/${dealId}/overview/diligence/${itemId}`, {
+    method: "PATCH",
+    json: payload,
+  });
+}
+
+export async function deleteDiligenceItem(dealId: number, itemId: number) {
+  return apiCall<any>(`/deals/${dealId}/overview/diligence/${itemId}`, {
+    method: "DELETE",
+  });
+}
+
+/* ─── Phase 3: Investment View (Create/Edit) ─── */
+
+export interface InvestmentViewCreatePayload {
+  content?: any;
+  recommendation?: string | null;
+  confidence_score?: number | null;
+  authored_by?: string;
+  status?: string;
+}
+
+export async function createOrEditInvestmentView(
+  dealId: number,
+  payload: InvestmentViewCreatePayload
+) {
+  return apiCall<any>(`/deals/${dealId}/overview/investment-view`, {
+    method: "POST",
+    json: payload,
+  });
+}
+
+/* ─── Phase 3: Refresh Overview ─── */
+
+export async function refreshOverview(dealId: number) {
+  return apiCall<any>(`/deals/${dealId}/overview/refresh`, { method: "POST" });
 }

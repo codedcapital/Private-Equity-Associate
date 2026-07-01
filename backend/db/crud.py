@@ -14,9 +14,14 @@ from db.models import (
     Company,
     CompanySource,
     CompetitorCompany,
+    ConfidenceLedger,
     Deal,
+    DealEvent,
     DealScore,
+    DealSettings,
     DealStage,
+    DiligenceItem,
+    EvidenceConflict,
     EvidenceItem,
     Filing,
     FilingChunk,
@@ -24,6 +29,7 @@ from db.models import (
     ICMemo,
     IntelligenceHub,
     IntelligenceQuestion,
+    InvestmentView,
     MarketPulseSetting,
     ScoreHistory,
     Signal,
@@ -1278,3 +1284,406 @@ async def truncate_all_tables(session: AsyncSession) -> None:
         )
     )
     await session.commit()
+# ── NEW: Investment Decision Platform CRUD ─────────────────────────────────
+
+
+# ── Investment View ──────────────────────────────────────────────────────────
+
+
+async def create_investment_view(
+    session: AsyncSession,
+    deal_id: int,
+    content: dict,
+    recommendation: str | None = None,
+    confidence_score: float | None = None,
+    authored_by: str = "system",
+    status: str = "draft",
+) -> InvestmentView:
+    """Create a new investment view for a deal."""
+    # Get next version number
+    result = await session.execute(
+        select(InvestmentView.version)
+        .where(InvestmentView.deal_id == deal_id)
+        .order_by(InvestmentView.version.desc())
+        .limit(1)
+    )
+    latest_version = result.scalar_one_or_none() or 0
+    next_version = latest_version + 1
+
+    view = InvestmentView(
+        deal_id=deal_id,
+        version=next_version,
+        content=content,
+        recommendation=recommendation,
+        confidence_score=confidence_score,
+        authored_by=authored_by,
+        status=status,
+    )
+    session.add(view)
+    await session.commit()
+    await session.refresh(view)
+    return view
+
+
+async def get_investment_view_by_id(
+    session: AsyncSession, view_id: int
+) -> InvestmentView | None:
+    result = await session.execute(
+        select(InvestmentView).where(InvestmentView.id == view_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_latest_investment_view(
+    session: AsyncSession, deal_id: int
+) -> InvestmentView | None:
+    result = await session.execute(
+        select(InvestmentView)
+        .where(InvestmentView.deal_id == deal_id)
+        .order_by(InvestmentView.version.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_investment_views(
+    session: AsyncSession, deal_id: int
+) -> Sequence[InvestmentView]:
+    stmt = (
+        select(InvestmentView)
+        .where(InvestmentView.deal_id == deal_id)
+        .order_by(InvestmentView.version.desc())
+    )
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def update_investment_view(
+    session: AsyncSession, view_id: int, **kwargs: Any
+) -> InvestmentView | None:
+    view = await get_investment_view_by_id(session, view_id)
+    if not view:
+        return None
+    for key, value in kwargs.items():
+        if hasattr(view, key):
+            setattr(view, key, value)
+    await session.commit()
+    await session.refresh(view)
+    return view
+
+
+async def delete_investment_view(session: AsyncSession, view_id: int) -> bool:
+    view = await get_investment_view_by_id(session, view_id)
+    if not view:
+        return False
+    await session.delete(view)
+    await session.commit()
+    return True
+
+
+# ── Diligence Item ───────────────────────────────────────────────────────────
+
+
+async def create_diligence_item(
+    session: AsyncSession,
+    deal_id: int,
+    category: str,
+    title: str,
+    description: str | None = None,
+    status: str = "not_started",
+    assigned_to: str | None = None,
+    due_date: date | None = None,
+    evidence_id: int | None = None,
+    priority: str = "medium",
+    created_by: str | None = None,
+) -> DiligenceItem:
+    item = DiligenceItem(
+        deal_id=deal_id,
+        category=category,
+        title=title,
+        description=description,
+        status=status,
+        assigned_to=assigned_to,
+        due_date=due_date,
+        evidence_id=evidence_id,
+        priority=priority,
+        created_by=created_by,
+    )
+    session.add(item)
+    await session.commit()
+    await session.refresh(item)
+    return item
+
+
+async def get_diligence_item_by_id(
+    session: AsyncSession, item_id: int
+) -> DiligenceItem | None:
+    result = await session.execute(
+        select(DiligenceItem).where(DiligenceItem.id == item_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_diligence_items(
+    session: AsyncSession,
+    deal_id: int | None = None,
+    status: str | None = None,
+) -> Sequence[DiligenceItem]:
+    stmt = select(DiligenceItem)
+    if deal_id is not None:
+        stmt = stmt.where(DiligenceItem.deal_id == deal_id)
+    if status is not None:
+        stmt = stmt.where(DiligenceItem.status == status)
+    stmt = stmt.order_by(
+        DiligenceItem.priority,
+        DiligenceItem.due_date,
+        DiligenceItem.created_at,
+    )
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def update_diligence_item(
+    session: AsyncSession, item_id: int, **kwargs: Any
+) -> DiligenceItem | None:
+    item = await get_diligence_item_by_id(session, item_id)
+    if not item:
+        return None
+    for key, value in kwargs.items():
+        if hasattr(item, key):
+            setattr(item, key, value)
+    await session.commit()
+    await session.refresh(item)
+    return item
+
+
+async def delete_diligence_item(session: AsyncSession, item_id: int) -> bool:
+    item = await get_diligence_item_by_id(session, item_id)
+    if not item:
+        return False
+    await session.delete(item)
+    await session.commit()
+    return True
+
+
+# ── Deal Event ─────────────────────────────────────────────────────────────────
+
+
+async def create_deal_event(
+    session: AsyncSession,
+    deal_id: int,
+    event_type: str,
+    description: str,
+    actor_type: str = "system",
+    actor_id: str | None = None,
+    event_metadata: dict | None = None,
+) -> DealEvent:
+    event = DealEvent(
+        deal_id=deal_id,
+        event_type=event_type,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        description=description,
+        event_metadata=event_metadata,
+    )
+    session.add(event)
+    await session.commit()
+    await session.refresh(event)
+    return event
+
+
+async def get_deal_event_by_id(session: AsyncSession, event_id: int) -> DealEvent | None:
+    result = await session.execute(
+        select(DealEvent).where(DealEvent.id == event_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_deal_events(
+    session: AsyncSession,
+    deal_id: int,
+    limit: int = 50,
+    event_type: str | None = None,
+) -> Sequence[DealEvent]:
+    stmt = select(DealEvent).where(DealEvent.deal_id == deal_id)
+    if event_type is not None:
+        stmt = stmt.where(DealEvent.event_type == event_type)
+    stmt = stmt.order_by(DealEvent.created_at.desc()).limit(limit)
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def delete_deal_event(session: AsyncSession, event_id: int) -> bool:
+    event = await get_deal_event_by_id(session, event_id)
+    if not event:
+        return False
+    await session.delete(event)
+    await session.commit()
+    return True
+
+
+# ── Confidence Ledger ────────────────────────────────────────────────────────
+
+
+async def create_confidence_ledger(
+    session: AsyncSession,
+    deal_id: int,
+    base_score: int,
+    factors: dict,
+    final_score: int,
+    bottlenecks: list[str] | None = None,
+    version: int = 1,
+) -> ConfidenceLedger:
+    ledger = ConfidenceLedger(
+        deal_id=deal_id,
+        version=version,
+        base_score=base_score,
+        factors=factors,
+        final_score=final_score,
+        bottlenecks=bottlenecks or [],
+    )
+    session.add(ledger)
+    await session.commit()
+    await session.refresh(ledger)
+    return ledger
+
+
+async def get_confidence_ledger_by_id(
+    session: AsyncSession, ledger_id: int
+) -> ConfidenceLedger | None:
+    result = await session.execute(
+        select(ConfidenceLedger).where(ConfidenceLedger.id == ledger_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_latest_confidence_ledger(
+    session: AsyncSession, deal_id: int
+) -> ConfidenceLedger | None:
+    result = await session.execute(
+        select(ConfidenceLedger)
+        .where(ConfidenceLedger.deal_id == deal_id)
+        .order_by(ConfidenceLedger.version.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_confidence_ledgers(
+    session: AsyncSession, deal_id: int
+) -> Sequence[ConfidenceLedger]:
+    stmt = (
+        select(ConfidenceLedger)
+        .where(ConfidenceLedger.deal_id == deal_id)
+        .order_by(ConfidenceLedger.version.desc())
+    )
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def delete_confidence_ledger(session: AsyncSession, ledger_id: int) -> bool:
+    ledger = await get_confidence_ledger_by_id(session, ledger_id)
+    if not ledger:
+        return False
+    await session.delete(ledger)
+    await session.commit()
+    return True
+
+
+# ── Evidence Conflict ────────────────────────────────────────────────────────
+
+
+async def create_evidence_conflict(
+    session: AsyncSession,
+    evidence_a_id: int,
+    evidence_b_id: int,
+    conflict_description: str,
+    resolution_status: str = "open",
+    resolved_by: str | None = None,
+    resolved_at: datetime | None = None,
+) -> EvidenceConflict:
+    conflict = EvidenceConflict(
+        evidence_a_id=evidence_a_id,
+        evidence_b_id=evidence_b_id,
+        conflict_description=conflict_description,
+        resolution_status=resolution_status,
+        resolved_by=resolved_by,
+        resolved_at=resolved_at,
+    )
+    session.add(conflict)
+    await session.commit()
+    await session.refresh(conflict)
+    return conflict
+
+
+async def get_evidence_conflict_by_id(
+    session: AsyncSession, conflict_id: int
+) -> EvidenceConflict | None:
+    result = await session.execute(
+        select(EvidenceConflict).where(EvidenceConflict.id == conflict_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_evidence_conflicts(
+    session: AsyncSession,
+    resolution_status: str | None = None,
+) -> Sequence[EvidenceConflict]:
+    stmt = select(EvidenceConflict)
+    if resolution_status is not None:
+        stmt = stmt.where(EvidenceConflict.resolution_status == resolution_status)
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def update_evidence_conflict(
+    session: AsyncSession, conflict_id: int, **kwargs: Any
+) -> EvidenceConflict | None:
+    conflict = await get_evidence_conflict_by_id(session, conflict_id)
+    if not conflict:
+        return None
+    for key, value in kwargs.items():
+        if hasattr(conflict, key):
+            setattr(conflict, key, value)
+    await session.commit()
+    await session.refresh(conflict)
+    return conflict
+
+
+async def delete_evidence_conflict(session: AsyncSession, conflict_id: int) -> bool:
+    conflict = await get_evidence_conflict_by_id(session, conflict_id)
+    if not conflict:
+        return False
+    await session.delete(conflict)
+    await session.commit()
+    return True
+
+
+# ── DealSettings ─────────────────────────────────────────────────────────────
+
+async def get_deal_settings(session: AsyncSession, deal_id: int) -> DealSettings | None:
+    result = await session.execute(select(DealSettings).where(DealSettings.deal_id == deal_id))
+    return result.scalar_one_or_none()
+
+
+async def upsert_deal_settings(
+    session: AsyncSession,
+    deal_id: int,
+    confidence_weights: dict | None = None,
+) -> DealSettings:
+    settings = await get_deal_settings(session, deal_id)
+    if settings:
+        if confidence_weights is not None:
+            settings.confidence_weights = confidence_weights
+        await session.commit()
+        await session.refresh(settings)
+        return settings
+    else:
+        new_settings = DealSettings(
+            deal_id=deal_id,
+            confidence_weights=confidence_weights or {},
+        )
+        session.add(new_settings)
+        await session.commit()
+        await session.refresh(new_settings)
+        return new_settings

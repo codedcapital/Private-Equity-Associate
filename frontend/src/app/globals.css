@@ -18,6 +18,25 @@
   --font-sans: var(--font-inter), Inter, sans-serif;
   --font-mono: var(--font-ibm-plex-mono), 'IBM Plex Mono', monospace;
   --font-serif: Georgia, serif;
+
+  /* ── Overview Design System (Phase 1 & 2) ── */
+  --color-ov-bg: #0a0a0a;
+  --color-ov-surface: #141414;
+  --color-ov-surface-hover: #1a1a1a;
+  --color-ov-border: #1f1f1f;
+  --color-ov-border-hover: #2a2a2a;
+  --color-ov-text-primary: #e5e5e5;
+  --color-ov-text-secondary: #737373;
+  --color-ov-text-muted: #525252;
+  --color-ov-accent: #c7a84b;
+  --color-ov-accent-muted: #c7a84b33;
+  --color-ov-positive: #4ade80b3;
+  --color-ov-warning: #fbbf24b3;
+  --color-ov-negative: #f87171b3;
+  --color-ov-unknown: #525252;
+  --font-ov-mono: 'JetBrains Mono', 'SF Mono', monospace;
+  --font-ov-sans: 'Inter', 'Geist', system-ui, sans-serif;
+  --font-ov-serif: 'Tiempos Text', 'Chronicle', Georgia, serif;
 }
 
 @layer base {
@@ -93,4 +112,189 @@
 
 .font-serif {
   font-family: Georgia, serif;
+}
+
+/* Overview page utilities */
+.font-ov-mono {
+  font-family: var(--font-jetbrains-mono), 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+.font-ov-sans {
+  font-family: var(--font-inter), 'Inter', 'Geist', system-ui, sans-serif;
+}
+
+.font-ov-serif {
+  font-family: 'Tiempos Text', 'Chronicle', Georgia, serif;
+}
+
+.bg-ov-bg {
+  background-color: #0a0a0a;
+}
+
+.bg-ov-surface {
+  background-color: #141414;
+}
+
+.bg-ov-surface-hover {
+  background-color: #1a1a1a;
+}
+
+.border-ov {
+  border-color: #1f1f1f;
+}
+
+.border-ov-hover {
+  border-color: #2a2a2a;
+}
+
+.text-ov-primary {
+  color: #e5e5e5;
+}
+
+.text-ov-secondary {
+  color: #737373;
+}
+
+.text-ov-muted {
+  color: #525252;
+}
+
+.text-ov-accent {
+  color: #c7a84b;
+}
+
+/* Skeleton animation for overview sections */
+@keyframes ovShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.ov-skeleton {
+  background: linear-gradient(
+    90deg,
+    #141414 25%,
+    #1a1a1a 50%,
+    #141414 75%
+  );
+  background-size: 200% 100%;
+  animation: ovShimmer 1.5s ease-in-out infinite;
+}
+
+
+/* ── High Contrast Mode (Phase 5: Accessibility) ── */
+.high-contrast {
+  --color-ov-bg: #000000;
+  --color-ov-surface: #000000;
+  --color-ov-border: #ffffff;
+  --color-ov-text-primary: #ffffff;
+  --color-ov-text-secondary: #ffffff;
+  --color-ov-text-muted: #cccccc;
+  --color-ov-accent: #ffff00;
+  --color-ov-accent-muted: #ffff0033;
+  --color-ov-positive: #00ff00;
+  --color-ov-warning: #ffcc00;
+  --color-ov-negative: #ff0000;
+  --color-ov-unknown: #999999;
+}
+
+.high-contrast body {
+  background: #000000 !important;
+  color: #ffffff !important;
+}
+
+.high-contrast section,
+.high-contrast .border {
+  border-color: #ffffff !important;
+}
+
+.high-contrast button {
+  border: 2px solid #ffffff !important;
+  background: #000000 !important;
+  color: #ffffff !important;
+}
+
+.high-contrast button:hover {
+  background: #ffff00 !important;
+  color: #000000 !important;
+}
+
+/* ── Focus styles for keyboard navigation (Phase 5) ── */
+*:focus-visible {
+  outline: 2px solid #c7a84b;
+  outline-offset: 2px;
+}
+
+.high-contrast *:focus-visible {
+  outline: 3px solid #ffff00;
+  outline-offset: 3px;
+}
+
+/* ── Skip link for screen readers (Phase 5) ── */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: #c7a84b;
+  color: #000000;
+  padding: 8px 16px;
+  z-index: 1000;
+  transition: top 0.3s;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+@media print {
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .no-print,
+  nav,
+  button,
+  [role="button"] {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  section {
+    page-break-inside: avoid;
+    border: 1px solid #ddd !important;
+    background: #fff !important;
+  }
+  .font-ov-serif {
+    color: #000 !important;
+  }
+  .font-ov-sans {
+    color: #333 !important;
+  }
+  .font-ov-mono {
+    color: #555 !important;
+  }
+  .pdf-cover {
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    text-align: center;
+    page-break-after: always;
+  }
+  .pdf-cover h1 {
+    font-size: 32px;
+    color: #000;
+    margin-bottom: 16px;
+  }
+  .pdf-cover .meta {
+    font-size: 14px;
+    color: #555;
+    margin-bottom: 8px;
+  }
+  .pdf-cover .score {
+    font-size: 48px;
+    font-weight: bold;
+    color: #c7a84b;
+    margin: 24px 0;
+  }
 }

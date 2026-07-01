@@ -12,7 +12,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from api.auth import get_current_user
 from api.middleware import RequestLoggingMiddleware
+from api.rate_limit import RateLimitMiddleware
+from api.dependencies import get_db
 from api.routers.admin import router as admin_router
 from api.routers.companies import router as companies_router
 from api.routers.competitive import router as competitive_router
@@ -22,6 +25,7 @@ from api.routers.intelligence import router as intelligence_router
 from api.routers.lbo import router as lbo_router
 from api.routers.market_pulse import router as market_pulse_router
 from api.routers.memo import router as memo_router
+from api.routers.overview import router as overview_router
 from api.routers.pipeline import agents_router, router as pipeline_router
 from api.routers.research import router as research_router
 from api.routers.sourcing import router as sourcing_router
@@ -55,6 +59,7 @@ app.add_middleware(
 )
 
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
 # ── Exception handlers ───────────────────────────────────────────────────────
 
@@ -96,6 +101,7 @@ app.include_router(admin_router)
 app.include_router(companies_router)
 app.include_router(market_pulse_router)
 app.include_router(dashboard_router)
+app.include_router(overview_router)
 
 # ── Root health ──────────────────────────────────────────────────────────────
 
