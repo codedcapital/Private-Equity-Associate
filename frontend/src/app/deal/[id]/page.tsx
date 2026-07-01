@@ -2,6 +2,8 @@ import { Suspense } from "react";
 import AppLayout from "@/components/app-layout";
 import DealPage from "./deal-page";
 
+export const dynamic = "force-dynamic";
+
 interface DealPageProps {
   params: Promise<{ id: string }>;
 }
@@ -19,13 +21,4 @@ export default function Deal({ params }: DealPageProps) {
       </Suspense>
     </AppLayout>
   );
-}
-
-export async function generateStaticParams() {
-  return [
-    { id: "1" },
-    { id: "2" },
-    { id: "3" },
-    { id: "4" },
-  ];
 }
