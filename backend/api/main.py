@@ -17,6 +17,7 @@ from api.routers.admin import router as admin_router
 from api.routers.companies import router as companies_router
 from api.routers.competitive import router as competitive_router
 from api.routers.financials import router as financials_router
+from api.routers.intelligence import router as intelligence_router
 from api.routers.lbo import router as lbo_router
 from api.routers.memo import router as memo_router
 from api.routers.pipeline import agents_router, router as pipeline_router
@@ -88,6 +89,7 @@ app.include_router(competitive_router)
 app.include_router(memo_router)
 app.include_router(pipeline_router)
 app.include_router(agents_router)
+app.include_router(intelligence_router)
 app.include_router(admin_router)
 app.include_router(companies_router)
 

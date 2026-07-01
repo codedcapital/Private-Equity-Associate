@@ -97,7 +97,122 @@ class Company(Base):
     competitors: Mapped[list["CompetitorCompany"]] = relationship(
         "CompetitorCompany", back_populates="company", cascade="all, delete-orphan"
     )
+    intelligence_hubs: Mapped[list["IntelligenceHub"]] = relationship(
+        "IntelligenceHub", back_populates="company", cascade="all, delete-orphan"
+    )
 
+
+class IntelligenceHub(Base):
+    """Central intelligence hub instance per company/deal."""
+
+    __tablename__ = "intelligence_hubs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    deal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("deal_pipeline.id", ondelete="CASCADE"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    executive_briefing: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # Relationships
+    company: Mapped["Company"] = relationship("Company", back_populates="intelligence_hubs")
+    questions: Mapped[list["IntelligenceQuestion"]] = relationship(
+        "IntelligenceQuestion", back_populates="hub", cascade="all, delete-orphan"
+    )
+    evidence: Mapped[list["EvidenceItem"]] = relationship(
+        "EvidenceItem", back_populates="hub", cascade="all, delete-orphan"
+    )
+    source_confidence: Mapped[list["SourceConfidence"]] = relationship(
+        "SourceConfidence", back_populates="hub", cascade="all, delete-orphan"
+    )
+
+
+class IntelligenceQuestion(Base):
+    """A question-answer node in the intelligence hub."""
+
+    __tablename__ = "intelligence_questions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    hub_id: Mapped[int] = mapped_column(
+        ForeignKey("intelligence_hubs.id", ondelete="CASCADE"), nullable=False
+    )
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Relationships
+    hub: Mapped["IntelligenceHub"] = relationship("IntelligenceHub", back_populates="questions")
+    evidence_items: Mapped[list["EvidenceItem"]] = relationship(
+        "EvidenceItem", back_populates="question", cascade="all, delete-orphan"
+    )
+
+
+class EvidenceItem(Base):
+    """A piece of evidence linked to a question."""
+
+    __tablename__ = "evidence_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    hub_id: Mapped[int] = mapped_column(
+        ForeignKey("intelligence_hubs.id", ondelete="CASCADE"), nullable=False
+    )
+    question_id: Mapped[int | None] = mapped_column(
+        ForeignKey("intelligence_questions.id", ondelete="CASCADE"), nullable=True
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    is_supporting: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_contradictory: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Relationships
+    hub: Mapped["IntelligenceHub"] = relationship("IntelligenceHub", back_populates="evidence")
+    question: Mapped["IntelligenceQuestion | None"] = relationship(
+        "IntelligenceQuestion", back_populates="evidence_items"
+    )
+
+
+class SourceConfidence(Base):
+    """Track reliability of each source used in the hub."""
+
+    __tablename__ = "source_confidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    hub_id: Mapped[int] = mapped_column(
+        ForeignKey("intelligence_hubs.id", ondelete="CASCADE"), nullable=False
+    )
+    source_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    confidence_score: Mapped[float] = mapped_column(Float, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # Relationships
+    hub: Mapped["IntelligenceHub"] = relationship(
+        "IntelligenceHub", back_populates="source_confidence"
+    )
 
 class Financial(Base):
     """Financial statement snapshot for a company at a given reporting date."""

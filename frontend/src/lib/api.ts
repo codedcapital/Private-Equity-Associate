@@ -1,5 +1,10 @@
 import ky from "ky";
 
+export interface ReasoningTraceStep {
+  timestamp: string;
+  text: string;
+}
+
 const BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ??
   (process.env.NODE_ENV === "production"
@@ -53,12 +58,66 @@ export async function getDeals() {
 
 export const listDeals = getDeals;
 
-export type DealRead = any;
-export type FinancialProfile = any;
-export type LBOResponse = any;
-export type CompetitiveResponse = any;
-export type ResearchResponse = any;
-export type MemoResponse = any;
+export interface SourcingResponse {
+  run_id: string;
+  status: string;
+  message: string;
+  candidates: SourcingCandidate[];
+  reasoning_trace?: ReasoningTraceStep[];
+}
+
+export interface FinancialProfile {
+  revenue?: number | null;
+  ebitda?: number | null;
+  ebitda_margin?: number | null;
+  revenue_growth?: number | null;
+  net_debt?: number | null;
+  net_debt_ebitda?: number | null;
+  fcf?: number | null;
+  fcf_yield?: number | null;
+  reasoning_trace?: ReasoningTraceStep[];
+}
+
+export interface LBOResponse {
+  lbo_result?: any;
+  scenarios?: any;
+  sensitivity_grid?: any;
+  interpretation?: string | null;
+  errors?: string[] | null;
+  reasoning_trace?: ReasoningTraceStep[];
+}
+
+export interface CompetitiveResponse {
+  competitive_map?: any;
+  reasoning_trace?: ReasoningTraceStep[];
+}
+
+export interface ResearchResponse {
+  research?: any;
+  reasoning_trace?: ReasoningTraceStep[];
+}
+
+export interface MemoResponse {
+  memo?: any;
+  pdf_download_url?: string | null;
+  reasoning_trace?: ReasoningTraceStep[];
+}
+
+export interface DealRead {
+  id: number;
+  company_id: number;
+  stage: string;
+  entry_ev?: number | null;
+  entry_ebitda?: number | null;
+  lbo_irr?: number | null;
+  lbo_moic?: number | null;
+  memo_id?: number | null;
+  last_updated?: string | null;
+  created_at?: string | null;
+  company?: any;
+  financials?: FinancialProfile | null;
+  reasoning_trace?: ReasoningTraceStep[];
+}
 
 export async function getDeal(id: number) {
   return apiCall<any>(`/pipeline/deals/${id}`);
@@ -77,6 +136,52 @@ export async function getLBO(companyId: number) {
 /* ─── Research ─── */
 export async function getResearch(companyId: number) {
   return apiCall<any>(`/agents/research/${companyId}`);
+}
+
+/* ─── Intelligence Hub ─── */
+export interface IntelligenceHubResponse {
+  hub_id: number;
+  company_id: number;
+  deal_id: number | null;
+  status: string;
+  executive_briefing: string | null;
+  questions: any[];
+  source_confidence: any[];
+  comparable_companies: any[];
+  remaining_diligence: string[];
+  generated_at: string;
+  updated_at: string;
+}
+
+export async function getIntelligenceHub(companyId: number): Promise<IntelligenceHubResponse> {
+  return apiCall<IntelligenceHubResponse>(`/intelligence/${companyId}`);
+}
+
+export async function generateIntelligenceHub(companyId: number): Promise<IntelligenceHubResponse> {
+  return apiCall<IntelligenceHubResponse>(`/intelligence/${companyId}/generate`, {
+    method: "POST",
+  });
+}
+
+export async function addHubQuestion(companyId: number, payload: { category: string; question: string; answer?: string; confidence?: number; sort_order?: number }) {
+  return apiCall<any>(`/intelligence/${companyId}/questions`, {
+    method: "POST",
+    json: payload,
+  });
+}
+
+export async function addHubEvidence(companyId: number, payload: { text: string; source: string; source_type: string; is_supporting?: boolean; is_contradictory?: boolean; confidence?: number; source_url?: string }) {
+  return apiCall<any>(`/intelligence/${companyId}/evidence`, {
+    method: "POST",
+    json: payload,
+  });
+}
+
+export async function setHubSourceConfidence(companyId: number, payload: { source_name: string; source_type: string; confidence_score: number; rationale: string }) {
+  return apiCall<any>(`/intelligence/${companyId}/source-confidence`, {
+    method: "POST",
+    json: payload,
+  });
 }
 
 /* ─── Competitive ─── */

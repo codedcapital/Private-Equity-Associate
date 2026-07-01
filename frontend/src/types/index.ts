@@ -109,6 +109,74 @@ export interface MoatItem {
   note: string;
 }
 
+export interface ReasoningTraceStep {
+  timestamp: string;
+  text: string;
+}
+
+// ── Intelligence Hub ──────────────────────────────────────────────────────
+
+export interface EvidenceItem {
+  id: number;
+  text: string;
+  source: string;
+  source_type: string;
+  source_url: string | null;
+  source_metadata: Record<string, unknown> | null;
+  is_supporting: boolean;
+  is_contradictory: boolean;
+  confidence: number | null;
+  created_at: string;
+}
+
+export interface IntelligenceQuestion {
+  id: number;
+  category: string;
+  question: string;
+  answer: string | null;
+  confidence: number | null;
+  sort_order: number;
+  evidence: EvidenceItem[];
+  created_at: string;
+}
+
+export interface SourceConfidence {
+  id: number;
+  source_name: string;
+  source_type: string;
+  confidence_score: number;
+  rationale: string;
+  updated_at: string;
+}
+
+export interface ComparableCompany {
+  name: string;
+  ticker: string | null;
+  tag: string;
+  revenue: string | null;
+  ebitda: string | null;
+  ebitda_margin: string | null;
+  ev_ebitda: string | null;
+  revenue_growth: string | null;
+  market_cap: string | null;
+  ownership: string | null;
+  source: string;
+}
+
+export interface IntelligenceHub {
+  hub_id: number;
+  company_id: number;
+  deal_id: number | null;
+  status: string;
+  executive_briefing: string | null;
+  questions: IntelligenceQuestion[];
+  source_confidence: SourceConfidence[];
+  comparable_companies: ComparableCompany[];
+  remaining_diligence: string[];
+  generated_at: string;
+  updated_at: string;
+}
+
 export interface ResearchItem {
   type: string;
   typeTier: 'teal' | 'gold' | 'gray';
