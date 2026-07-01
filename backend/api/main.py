@@ -16,6 +16,8 @@ from api.auth import get_current_user
 from api.middleware import RequestLoggingMiddleware
 from api.rate_limit import RateLimitMiddleware
 from api.dependencies import get_db
+from api.routers.opportunity_discovery import router as opportunity_discovery_router
+
 from api.routers.admin import router as admin_router
 from api.routers.companies import router as companies_router
 from api.routers.competitive import router as competitive_router
@@ -89,6 +91,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 # ── Router mounting ──────────────────────────────────────────────────────────
 
 app.include_router(sourcing_router)
+app.include_router(opportunity_discovery_router)
 app.include_router(research_router)
 app.include_router(financials_router)
 app.include_router(lbo_router)

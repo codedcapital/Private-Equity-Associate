@@ -418,6 +418,8 @@ async def refresh_overview(deal_id: int) -> dict[str, Any]:
 
     Re-runs the confidence ledger builder and decision readiness,
     updates the investment view if AI draft is newer.
+    If no intelligence hub data exists, returns the current overview
+    with whatever data is available (graceful degradation).
     """
     async with async_session_factory() as session:
         deal = await get_deal_by_id(session, deal_id)
@@ -425,36 +427,43 @@ async def refresh_overview(deal_id: int) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail=f"Deal {deal_id} not found")
 
         hub = await get_hub_by_company(session, deal.company_id)
-        if not hub or not hub.decision_output:
-            raise HTTPException(
-                status_code=400,
-                detail="No intelligence hub data available. Run the pipeline first.",
+
+        if hub and hub.decision_output:
+            # Rebuild confidence ledger from cached decision output
+            from schemas.evidence import DecisionOutput
+            try:
+                decision = DecisionOutput.model_validate(hub.decision_output)
+            except Exception as exc:
+                logger.warning("Cached decision output is corrupted for deal %s: %s", deal_id, exc)
+            else:
+                builder = ConfidenceLedgerBuilder(deal_id=deal_id)
+                await builder.build_from_decision(decision)
+
+                # Seed or update investment view
+                manager = InvestmentViewManager(deal_id=deal_id)
+                await manager.seed_from_decision(decision, force=False)
+
+                await create_deal_event(
+                    session,
+                    deal_id=deal_id,
+                    event_type="evidence_refreshed",
+                    actor_type="system",
+                    description="Overview refreshed from intelligence engine",
+                    event_metadata={"confidence_score": decision.confidence_score},
+                )
+        else:
+            # No hub data — log but don't fail. Just return current overview.
+            logger.info(
+                "No intelligence hub data for deal %s. Returning current overview.", deal_id
             )
-
-        # Rebuild confidence ledger from cached decision output
-        from schemas.evidence import DecisionOutput
-        try:
-            decision = DecisionOutput.model_validate(hub.decision_output)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500, detail=f"Cached decision output is corrupted: {exc}"
-            ) from exc
-
-        builder = ConfidenceLedgerBuilder(deal_id=deal_id)
-        await builder.build_from_decision(decision)
-
-        # Seed or update investment view
-        manager = InvestmentViewManager(deal_id=deal_id)
-        await manager.seed_from_decision(decision, force=False)
-
-        await create_deal_event(
-            session,
-            deal_id=deal_id,
-            event_type="evidence_refreshed",
-            actor_type="system",
-            description="Overview refreshed from intelligence engine",
-            event_metadata={"confidence_score": decision.confidence_score},
-        )
+            await create_deal_event(
+                session,
+                deal_id=deal_id,
+                event_type="evidence_refreshed",
+                actor_type="system",
+                description="Overview refresh requested — no intelligence hub data available",
+                event_metadata={"hub_exists": bool(hub)},
+            )
 
     return await _build_overview(deal_id)
 

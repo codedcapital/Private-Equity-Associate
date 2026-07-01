@@ -11,6 +11,7 @@ export default function DealPage({ id }: { id: string }) {
   const [dealData, setDealData] = useState<DealRead | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const numericId = parseInt(id, 10);
 
@@ -40,6 +41,7 @@ export default function DealPage({ id }: { id: string }) {
     setRefreshing(true);
     try {
       await refreshOverview(numericId);
+      setRefreshKey((k) => k + 1);
       addToast("success", "Overview refreshed", "Data has been regenerated from the intelligence engine.");
     } catch (err) {
       addToast("warning", "Refresh failed", err instanceof Error ? err.message : "Could not refresh overview.");
@@ -100,7 +102,7 @@ export default function DealPage({ id }: { id: string }) {
       </div>
 
       {/* Overview page */}
-      <OverviewPage dealId={id} />
+      <OverviewPage dealId={id} refreshKey={refreshKey} />
     </div>
   );
 }

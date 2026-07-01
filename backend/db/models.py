@@ -795,3 +795,43 @@ class DealSettings(Base):
     __table_args__ = (
         Index("idx_deal_settings_deal_id", "deal_id"),
     )
+
+
+class InvestmentStrategy(Base):
+    """A persistent, configurable investment mandate that filters the universe."""
+
+    __tablename__ = "investment_strategies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Criteria stored as JSON for flexibility (can evolve without migrations)
+    criteria: Mapped[dict] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: {
+            "sectors": [],
+            "geographies": [],
+            "business_models": [],
+            "ownership_types": [],
+            "min_revenue": None,
+            "max_revenue": None,
+            "min_ebitda": None,
+            "max_ebitda": None,
+            "min_ebitda_margin": None,
+            "min_revenue_growth": None,
+            "max_net_debt_ebitda": None,
+            "min_fcf_yield": None,
+            "customer_concentration": None,
+            "product_type": None,
+        },
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

@@ -871,7 +871,36 @@ export async function createOrEditInvestmentView(
   });
 }
 
-/* ─── Phase 3: Refresh Overview ─── */
+/* ─── Phase 3: Overview ─── */
+
+export interface OverviewResponse {
+  deal_id: number;
+  company: {
+    id: number;
+    name: string;
+    ticker: string | null;
+    sector: string;
+    geography: string;
+  };
+  stage: string;
+  investment_view: any;
+  confidence: any;
+  evidence: any[];
+  diligence: {
+    items: any[];
+    total: number;
+    complete: number;
+    open: number;
+  };
+  decision_readiness: any;
+  recent_events: any[];
+  financial_snapshot: any;
+  lbo: any;
+}
+
+export async function getOverview(dealId: number): Promise<OverviewResponse> {
+  return apiCall<OverviewResponse>(`/deals/${dealId}/overview`);
+}
 
 export async function refreshOverview(dealId: number) {
   return apiCall<any>(`/deals/${dealId}/overview/refresh`, { method: "POST" });

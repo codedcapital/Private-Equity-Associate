@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from typing import Any, Sequence
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,7 @@ from db.models import (
     ICMemo,
     IntelligenceHub,
     IntelligenceQuestion,
+    InvestmentStrategy,
     InvestmentView,
     MarketPulseSetting,
     ScoreHistory,
@@ -1687,3 +1688,115 @@ async def upsert_deal_settings(
         await session.commit()
         await session.refresh(new_settings)
         return new_settings
+
+
+# ── InvestmentStrategy ─────────────────────────────────────────────────────
+
+
+async def create_investment_strategy(
+    session: AsyncSession,
+    name: str,
+    criteria: dict | None = None,
+    is_active: bool = True,
+    is_default: bool = False,
+) -> InvestmentStrategy:
+    strategy = InvestmentStrategy(
+        name=name,
+        criteria=criteria or {},
+        is_active=is_active,
+        is_default=is_default,
+    )
+    session.add(strategy)
+    await session.commit()
+    await session.refresh(strategy)
+    return strategy
+
+
+async def get_investment_strategy_by_id(
+    session: AsyncSession, strategy_id: int
+) -> InvestmentStrategy | None:
+    result = await session.execute(
+        select(InvestmentStrategy).where(InvestmentStrategy.id == strategy_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_active_investment_strategy(
+    session: AsyncSession,
+) -> InvestmentStrategy | None:
+    """Get the currently active (default) strategy."""
+    result = await session.execute(
+        select(InvestmentStrategy)
+        .where(InvestmentStrategy.is_active == True)
+        .where(InvestmentStrategy.is_default == True)
+        .limit(1)
+    )
+    strategy = result.scalar_one_or_none()
+    if strategy:
+        return strategy
+    # Fallback: any active strategy
+    result = await session.execute(
+        select(InvestmentStrategy)
+        .where(InvestmentStrategy.is_active == True)
+        .order_by(InvestmentStrategy.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_investment_strategies(
+    session: AsyncSession,
+    skip: int = 0,
+    limit: int = 100,
+    only_active: bool = False,
+) -> Sequence[InvestmentStrategy]:
+    stmt = select(InvestmentStrategy).offset(skip).limit(limit)
+    if only_active:
+        stmt = stmt.where(InvestmentStrategy.is_active == True)
+    stmt = stmt.order_by(InvestmentStrategy.created_at.desc())
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def update_investment_strategy(
+    session: AsyncSession, strategy_id: int, **kwargs: Any
+) -> InvestmentStrategy | None:
+    strategy = await get_investment_strategy_by_id(session, strategy_id)
+    if not strategy:
+        return None
+    for key, value in kwargs.items():
+        if hasattr(strategy, key):
+            setattr(strategy, key, value)
+    await session.commit()
+    await session.refresh(strategy)
+    return strategy
+
+
+async def delete_investment_strategy(session: AsyncSession, strategy_id: int) -> bool:
+    strategy = await get_investment_strategy_by_id(session, strategy_id)
+    if not strategy:
+        return False
+    await session.delete(strategy)
+    await session.commit()
+    return True
+
+
+async def set_default_investment_strategy(
+    session: AsyncSession, strategy_id: int
+) -> InvestmentStrategy | None:
+    """Set a strategy as the default, clearing all others."""
+    # Unset all existing defaults
+    await session.execute(
+        update(InvestmentStrategy).values(is_default=False)
+    )
+    await session.commit()
+
+    # Set the new default
+    strategy = await get_investment_strategy_by_id(session, strategy_id)
+    if not strategy:
+        return None
+    strategy.is_default = True
+    strategy.is_active = True
+    await session.commit()
+    await session.refresh(strategy)
+    return strategy

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import type { ViewMode } from "@/types/overview";
 import { useDealOverview } from "@/hooks/use-deal-overview";
 import { InvestmentViewSection } from "@/components/overview/sections/investment-view-section";
@@ -13,11 +13,18 @@ import { RecommendedActionsSection } from "@/components/overview/sections/recomm
 
 interface OverviewPageProps {
   dealId: string;
+  refreshKey?: number;
 }
 
-export function OverviewPage({ dealId }: OverviewPageProps) {
-  const { data, loading } = useDealOverview(dealId);
+export function OverviewPage({ dealId, refreshKey }: OverviewPageProps) {
+  const { data, loading, refetch } = useDealOverview(dealId);
   const [viewMode] = useState<ViewMode>("document");
+
+  useEffect(() => {
+    if (refreshKey !== undefined && refreshKey > 0) {
+      refetch();
+    }
+  }, [refreshKey, refetch]);
 
   return (
     <div className="max-w-[960px] mx-auto px-8 py-8 flex flex-col" style={{ gap: "48px" }}>
