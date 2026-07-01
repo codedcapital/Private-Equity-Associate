@@ -11,7 +11,7 @@ interface QuestionCardProps {
   answer: string | null;
   confidence: number | null;
   evidence: EvidenceItem[];
-  sortOrder: number;
+  sortOrder?: number;
 }
 
 const categoryLabels: Record<string, string> = {
