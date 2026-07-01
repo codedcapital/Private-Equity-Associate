@@ -167,7 +167,7 @@ export default function DashboardPage() {
         ev: formatEV(d.entry_ev),
         irr: formatIRR(irr),
         irrTier: irrT,
-        updated: relativeTime(d.last_updated),
+        updated: relativeTime(d.last_updated ?? null),
         statusLabel: stageLabel(d.stage),
         statusColor: stageColor(d.stage),
         stage: d.stage,
