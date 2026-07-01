@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -21,6 +22,7 @@ from db.crud import get_ic_memo_by_id
 from db.session import async_session_factory
 from schemas.agent import AgentRunRequest, AgentRunResponse
 from schemas.memo import ICMemoRead
+from schemas.reasoning_trace import ReasoningTraceStep
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +100,20 @@ async def get_memo(memo_id: int) -> dict[str, Any]:
 
     pdf_url = f"/agents/memo/{memo_id}/download" if memo.pdf_path else None
 
+    trace: list[ReasoningTraceStep] = []
+    ts = datetime.utcnow().isoformat() + "Z"
+    trace.append(ReasoningTraceStep(timestamp=ts, text="Retrieved memo from database"))
+    sections = memo.sections or {}
+    trace.append(ReasoningTraceStep(timestamp=ts, text=f"Loaded {len(sections)} memo sections"))
+    if memo.word_count:
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Word count: {memo.word_count}"))
+    if memo.confidence_score:
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Confidence score: {memo.confidence_score:.2f}"))
+
     return {
         "memo": ICMemoRead.model_validate(memo).model_dump(mode="json"),
         "pdf_download_url": pdf_url,
+        "reasoning_trace": trace,
     }
 
 

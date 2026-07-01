@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { useToast } from "@/components/toast";
 import { listDeals, type DealRead } from "@/lib/api";
+import { MetricWithInfo } from "@/components/info-flyout";
 
 /* ─── Color helpers ─── */
 function tierColor(t: string) {
@@ -103,7 +104,7 @@ function dotForColumn(title: string): string {
   return map[title] ?? "#6B7280";
 }
 
-function relativeTime(ts: string | null): string {
+function relativeTime(ts: string | null | undefined): string {
   if (!ts) return "—";
   const d = new Date(ts);
   const now = new Date();
@@ -341,17 +342,39 @@ export default function DashboardPage() {
                       <div className="mt-[11px] flex gap-0 border-t border-[#1E1E2E] pt-[9px]">
                         <div className="flex-1">
                           <div className="text-[9px] text-[#6B7280] tracking-[0.06em] uppercase">Revenue</div>
-                          <div className="font-mono text-[13px] font-semibold text-[#C8A96E] mt-[2px]">{d.revenue}</div>
+                          <div className="font-mono text-[13px] font-semibold text-[#C8A96E] mt-[2px]">
+                            <MetricWithInfo
+                              value={d.revenue}
+                              label="Revenue"
+                              formula="Total revenue from the latest reported financial period."
+                              source="Yahoo Finance API → financial snapshot"
+                              lastUpdated={d.updated ?? null}
+                            />
+                          </div>
                         </div>
                         <div className="flex-1 border-l border-[#1E1E2E] pl-[11px]">
                           <div className="text-[9px] text-[#6B7280] tracking-[0.06em] uppercase">EBITDA</div>
                           <div className="font-mono text-[13px] font-semibold mt-[2px]" style={{ color: tierColor(d.marginTier) }}>
-                            {d.margin}
+                            <MetricWithInfo
+                              value={d.margin}
+                              label="EBITDA Margin"
+                              formula="EBITDA / Revenue × 100. Measures operating profitability before interest, taxes, depreciation and amortization."
+                              source="Calculated field (financial snapshot)"
+                              lastUpdated={d.updated ?? null}
+                            />
                           </div>
                         </div>
                         <div className="flex-1 border-l border-[#1E1E2E] pl-[11px]">
                           <div className="text-[9px] text-[#6B7280] tracking-[0.06em] uppercase">Entry EV</div>
-                          <div className="font-mono text-[13px] font-semibold text-[#E8E8F0] mt-[2px]">{d.ev}</div>
+                          <div className="font-mono text-[13px] font-semibold text-[#E8E8F0] mt-[2px]">
+                            <MetricWithInfo
+                              value={d.ev}
+                              label="Entry EV"
+                              formula="Entry Enterprise Value recorded for this deal. Represents the total value of the company at acquisition."
+                              source="Deal record (pipeline database)"
+                              lastUpdated={d.updated ?? null}
+                            />
+                          </div>
                         </div>
                       </div>
 

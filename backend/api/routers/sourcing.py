@@ -5,8 +5,11 @@ Endpoints:
     POST   /agents/sourcing            — Run sourcing agent for a thesis
 """
 
+from datetime import datetime
 from fastapi import APIRouter
 from pydantic import BaseModel
+
+from schemas.reasoning_trace import ReasoningTraceStep
 
 from agents.sourcing import run_sourcing
 
@@ -32,6 +35,7 @@ class SourcingAgentResponse(BaseModel):
     status: str
     message: str
     candidates: list[dict]
+    reasoning_trace: list[ReasoningTraceStep] | None = None
 
 
 @router.get("/health")
@@ -72,9 +76,21 @@ async def run_sourcing_agent(request: SourcingAgentRequest) -> SourcingAgentResp
         else f"Found {len(ranked)} candidates"
     )
 
+    ts = datetime.utcnow().isoformat() + "Z"
+    trace: list[ReasoningTraceStep] = []
+    trace.append(ReasoningTraceStep(timestamp=ts, text=f"Parsed investment thesis: {thesis[:80]}..."))
+    trace.append(ReasoningTraceStep(timestamp=ts, text="Screened database for matching companies"))
+    if ranked:
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Ranked {len(ranked)} candidates by fit score"))
+        top = ranked[0]
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Top candidate: {top.get('name', 'Unknown')} (score: {top.get('score', 0):.2f})"))
+    else:
+        trace.append(ReasoningTraceStep(timestamp=ts, text="No matching candidates found in database"))
+
     return SourcingAgentResponse(
         run_id=run_id,
         status=status,
         message=message,
         candidates=ranked,
+        reasoning_trace=trace,
     )

@@ -9,11 +9,14 @@ Endpoints:
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
+from datetime import datetime
+
 from agents.financials import run_financial_analysis
 from db.models import Financial
 from db.session import async_session_factory
 from schemas.agent import AgentRunRequest, AgentRunResponse, AgentStatus
 from schemas.financials import FinancialProfile
+from schemas.reasoning_trace import ReasoningTraceStep
 
 router = APIRouter(prefix="/agents/financials", tags=["financials"])
 
@@ -62,6 +65,28 @@ async def get_financial_profile(company_id: int) -> FinancialProfile:
             detail=f"Financials not found for company_id={company_id}",
         )
 
+    trace: list[ReasoningTraceStep] = []
+    ts = datetime.utcnow().isoformat() + "Z"
+    trace.append(ReasoningTraceStep(timestamp=ts, text=f"Retrieved latest financial record for company_id={company_id} from database"))
+
+    if fin.revenue is not None:
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Revenue: ${fin.revenue:,.0f} (raw from financial snapshot)"))
+    if fin.ebitda is not None and fin.revenue is not None and fin.revenue > 0:
+        margin = fin.ebitda / fin.revenue
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Computed EBITDA margin = EBITDA / Revenue = {margin:.1%}"))
+    if fin.total_debt is not None and fin.cash is not None:
+        nd = fin.total_debt - fin.cash
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Computed net debt = Total Debt - Cash = ${nd:,.0f}"))
+    if fin.net_debt is not None and fin.ebitda is not None and fin.ebitda > 0:
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Computed Net Debt / EBITDA = {fin.net_debt / fin.ebitda:.1f}x"))
+    if fin.operating_cf is not None and fin.capex is not None:
+        fcf = fin.operating_cf - fin.capex
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Computed FCF = Operating CF - CapEx = ${fcf:,.0f}"))
+    if fin.fcf is not None and fin.revenue is not None and fin.revenue > 0:
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Computed FCF yield = FCF / Revenue = {fin.fcf / fin.revenue:.1%}"))
+    if fin.revenue_growth is not None:
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Revenue growth YoY = {fin.revenue_growth:.1%}"))
+
     return FinancialProfile(
         revenue=fin.revenue,
         ebitda=fin.ebitda,
@@ -71,4 +96,5 @@ async def get_financial_profile(company_id: int) -> FinancialProfile:
         net_debt_ebitda=fin.net_debt_ebitda,
         fcf=fin.fcf,
         fcf_yield=fin.fcf_yield,
+        reasoning_trace=trace,
     )

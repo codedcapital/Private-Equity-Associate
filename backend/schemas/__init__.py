@@ -36,11 +36,10 @@ from schemas.financials import (
     FinancialProfile,
     FinancialRead,
 )
-from schemas.memo import (
-    ICMemoCreate,
-    ICMemoList,
-    ICMemoRead,
+from schemas.reasoning_trace import (
+    ReasoningTraceStep,
 )
+
 
 __all__ = [
     # Company
@@ -77,4 +76,6 @@ __all__ = [
     "CompetitorCreate",
     "CompetitorRead",
     "CompetitorList",
+    # Reasoning Trace
+    "ReasoningTraceStep",
 ]

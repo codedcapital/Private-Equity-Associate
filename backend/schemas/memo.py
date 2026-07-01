@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from schemas.reasoning_trace import ReasoningTraceStep
+
 
 class ICMemoCreate(BaseModel):
     """Schema for creating a new IC memo."""
@@ -27,8 +29,10 @@ class ICMemoRead(BaseModel):
     confidence_score: float | None
     pdf_path: str | None
     created_at: datetime
+    reasoning_trace: list[ReasoningTraceStep] | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
 
 
 class ICMemoList(BaseModel):

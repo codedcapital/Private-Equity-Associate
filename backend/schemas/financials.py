@@ -4,6 +4,8 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from schemas.reasoning_trace import ReasoningTraceStep
+
 
 class FinancialCreate(BaseModel):
     """Schema for creating a new financial snapshot."""
@@ -73,6 +75,7 @@ class FinancialProfile(BaseModel):
     net_debt_ebitda: float | None
     fcf: float | None
     fcf_yield: float | None
+    reasoning_trace: list[ReasoningTraceStep] | None = None
 
 
 class FinancialList(BaseModel):

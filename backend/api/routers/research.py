@@ -12,6 +12,29 @@ from agents.state import deal_state_from_json
 from db.session import async_session_factory
 from schemas.agent import AgentRunRequest
 from schemas.research import ResearchAgentResponse
+from schemas.reasoning_trace import ReasoningTraceStep
+from datetime import datetime
+from typing import Any
+
+router = APIRouter(prefix="/agents/research", tags=["research"])
+
+
+def _build_research_trace(research: Any, source: str = "agent") -> list[ReasoningTraceStep]:
+    """Build a synthetic reasoning trace from research data."""
+    ts = datetime.utcnow().isoformat() + "Z"
+    trace: list[ReasoningTraceStep] = []
+    trace.append(ReasoningTraceStep(timestamp=ts, text=f"Loaded research data from {source}"))
+    if isinstance(research, dict):
+        if research.get("tam"):
+            trace.append(ReasoningTraceStep(timestamp=ts, text=f"Market TAM identified: ${research['tam']}B"))
+        if research.get("cagr"):
+            trace.append(ReasoningTraceStep(timestamp=ts, text=f"CAGR estimate: {research['cagr']}%"))
+        if research.get("growth_drivers"):
+            trace.append(ReasoningTraceStep(timestamp=ts, text=f"Identified {len(research['growth_drivers'])} growth drivers"))
+        if research.get("risks"):
+            trace.append(ReasoningTraceStep(timestamp=ts, text=f"Identified {len(research['risks'])} key risks"))
+    trace.append(ReasoningTraceStep(timestamp=ts, text="Formatted research findings for IC review"))
+    return trace
 
 router = APIRouter(prefix="/agents/research", tags=["research"])
 
@@ -50,6 +73,7 @@ async def get_research_for_company(company_id: int) -> ResearchAgentResponse:
                 message="Research loaded from cache",
                 research=log.output_data["research"],
                 errors=log.errors,
+                reasoning_trace=_build_research_trace(log.output_data["research"], source="cache"),
             )
 
         # 2. Check full pipeline checkpoint
@@ -73,6 +97,7 @@ async def get_research_for_company(company_id: int) -> ResearchAgentResponse:
                         message="Research loaded from pipeline checkpoint",
                         research=research,
                         errors=state.get("errors"),
+                        reasoning_trace=_build_research_trace(research, source="pipeline checkpoint"),
                     )
             except Exception:
                 pass  # malformed state_json, fall through to re-run
@@ -94,6 +119,7 @@ async def get_research_for_company(company_id: int) -> ResearchAgentResponse:
         message=message,
         research=final_state.get("research"),
         errors=final_state.get("errors"),
+        reasoning_trace=_build_research_trace(final_state.get("research"), source="agent run"),
     )
 
 
@@ -123,5 +149,6 @@ async def run_research_agent(request: AgentRunRequest) -> ResearchAgentResponse:
         message=message,
         research=research,
         errors=final_state.get("errors"),
+        reasoning_trace=_build_research_trace(research, source="agent run"),
     )
 

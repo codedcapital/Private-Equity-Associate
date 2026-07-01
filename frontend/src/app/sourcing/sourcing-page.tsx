@@ -4,6 +4,9 @@ import { useState } from "react";
 import { useToast } from "@/components/toast";
 import { runSourcing, createDeal, type SourcingCandidate } from "@/lib/api";
 
+import { MetricWithInfo } from "@/components/info-flyout";
+import { ReasoningTrace } from "@/components/reasoning-trace";
+
 const sourceFilters = [
   { label: "Sector", value: "All" },
   { label: "Geography", value: "North America" },
@@ -23,6 +26,8 @@ export default function SourcingPage() {
   const [elapsed, setElapsed] = useState(0);
   const [adding, setAdding] = useState<Set<string>>(new Set());
 
+  const [reasoningTrace, setReasoningTrace] = useState<{ timestamp: string; text: string }[]>([]);
+
   const runSourcingAgent = async () => {
     if (!thesis.trim()) {
       addToast("warning", "Empty thesis", "Enter an investment thesis before running the sourcing agent.");
@@ -30,6 +35,7 @@ export default function SourcingPage() {
     }
     setSourcing("running");
     setResults([]);
+    setReasoningTrace([]);
     const start = Date.now();
 
     try {
@@ -37,6 +43,7 @@ export default function SourcingPage() {
       const elapsed = ((Date.now() - start) / 1000).toFixed(1);
       setElapsed(Number(elapsed));
       setResults(data.candidates ?? []);
+      setReasoningTrace(data.reasoning_trace ?? []);
       setSourcing("done");
       if (data.candidates && data.candidates.length > 0) {
         addToast("success", "Sourcing complete", `${data.candidates.length} candidates ranked in ${elapsed}s`);
@@ -176,8 +183,24 @@ export default function SourcingPage() {
                     </div>
                     <div className="px-3 py-[11px] text-[13px] font-semibold text-[#E8E8F0]">{r.name}</div>
                     <div className="px-3 py-[11px] text-xs text-[#9aa0ad]">{r.sector ?? "—"}</div>
-                    <div className="px-3 py-[11px] font-mono text-[13px] text-[#C8A96E] text-right">{revenueStr}</div>
-                    <div className="px-3 py-[11px] font-mono text-[13px] text-[#E8E8F0] text-right">{marginStr}</div>
+                    <div className="px-3 py-[11px] font-mono text-[13px] text-[#C8A96E] text-right">
+                      <MetricWithInfo
+                        value={revenueStr}
+                        label="Revenue"
+                        formula="Total revenue from the latest reported financial period."
+                        source="Yahoo Finance API → financial snapshot"
+                        lastUpdated={new Date().toLocaleString()}
+                      />
+                    </div>
+                    <div className="px-3 py-[11px] font-mono text-[13px] text-[#E8E8F0] text-right">
+                      <MetricWithInfo
+                        value={marginStr}
+                        label="EBITDA Margin"
+                        formula="EBITDA / Revenue × 100"
+                        source="Calculated field (financial snapshot)"
+                        lastUpdated={new Date().toLocaleString()}
+                      />
+                    </div>
                     <div className="px-3 py-[11px] flex items-center gap-[9px]">
                       <div className="flex-1 h-[6px] bg-[#1E1E2E] relative">
                         <div
@@ -202,6 +225,7 @@ export default function SourcingPage() {
                 );
               })}
             </div>
+            <ReasoningTrace steps={reasoningTrace} />
           </div>
         )}
 

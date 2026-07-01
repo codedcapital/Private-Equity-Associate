@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from schemas.reasoning_trace import ReasoningTraceStep
+
 
 class LBOInputsSchema(BaseModel):
     """Pydantic schema for LBO model inputs."""
@@ -78,6 +80,7 @@ class LBOAgentResponse(BaseModel):
     sensitivity_grid: dict | None = None
     interpretation: str | None = None
     errors: list[str] | None = None
+    reasoning_trace: list[ReasoningTraceStep] | None = None
 
 
 class LBOScenario(BaseModel):

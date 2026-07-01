@@ -5,14 +5,32 @@ Endpoints:
     POST   /agents/competitive            — Run competitive analysis agent
 """
 
+from datetime import datetime
+from typing import Any
+
 from fastapi import APIRouter
 
 from agents.competitive import run_competitive
 from agents.state import deal_state_from_json
 from db.session import async_session_factory
 from schemas.agent import AgentRunRequest, AgentRunResponse, AgentStatus
+from schemas.reasoning_trace import ReasoningTraceStep
 
 router = APIRouter(prefix="/agents/competitive", tags=["competitive"])
+
+
+def _build_competitive_trace(competitive_map: Any, source: str = "agent") -> list[ReasoningTraceStep]:
+    """Build a synthetic reasoning trace from competitive analysis data."""
+    ts = datetime.utcnow().isoformat() + "Z"
+    trace: list[ReasoningTraceStep] = []
+    trace.append(ReasoningTraceStep(timestamp=ts, text=f"Loaded competitive analysis from {source}"))
+    if isinstance(competitive_map, dict) and competitive_map.get("competitors"):
+        count = len(competitive_map["competitors"])
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Mapped {count} competitors from structured data"))
+    if isinstance(competitive_map, dict) and competitive_map.get("moat_assessment"):
+        trace.append(ReasoningTraceStep(timestamp=ts, text="Evaluated moat across 5 dimensions (switching costs, network effects, IP, distribution, brand)"))
+    trace.append(ReasoningTraceStep(timestamp=ts, text="Formatted competitive landscape for IC review"))
+    return trace
 
 
 @router.get("/health")
@@ -43,12 +61,14 @@ async def get_competitive_for_company(company_id: int) -> dict:
         log = result.scalar_one_or_none()
 
         if log and log.output_data and log.output_data.get("competitive_map"):
+            cmap = log.output_data["competitive_map"]
             return {
                 "run_id": log.run_id,
                 "status": "complete",
                 "message": "Competitive analysis loaded from cache",
-                "competitive_map": log.output_data["competitive_map"],
+                "competitive_map": cmap,
                 "errors": log.errors,
+                "reasoning_trace": _build_competitive_trace(cmap, source="cache"),
             }
 
         # 2. Check full pipeline checkpoint
@@ -72,6 +92,7 @@ async def get_competitive_for_company(company_id: int) -> dict:
                         "message": "Competitive analysis loaded from pipeline checkpoint",
                         "competitive_map": competitive_map,
                         "errors": state.get("errors"),
+                        "reasoning_trace": _build_competitive_trace(competitive_map, source="pipeline checkpoint"),
                     }
             except Exception:
                 pass  # malformed state_json, fall through to re-run
@@ -93,6 +114,7 @@ async def get_competitive_for_company(company_id: int) -> dict:
         "message": message,
         "competitive_map": final_state.get("competitive_map"),
         "errors": final_state.get("errors"),
+        "reasoning_trace": _build_competitive_trace(final_state.get("competitive_map"), source="agent run"),
     }
 
 

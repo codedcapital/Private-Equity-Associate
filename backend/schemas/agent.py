@@ -5,6 +5,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict
 
+from schemas.reasoning_trace import ReasoningTraceStep
+
 
 class AgentStatus(str, Enum):
     """Execution status of an agent run."""
@@ -29,6 +31,7 @@ class AgentRunResponse(BaseModel):
     run_id: str
     status: AgentStatus
     message: str
+    reasoning_trace: list[ReasoningTraceStep] | None = None
 
 
 class PipelineRunRequest(BaseModel):

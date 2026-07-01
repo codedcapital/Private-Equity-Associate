@@ -23,7 +23,9 @@ import {
   type AgentRunLog,
 } from "@/lib/api";
 
-/* ─── helpers ─── */
+import { MetricWithInfo } from "@/components/info-flyout";
+import { ReasoningTrace } from "@/components/reasoning-trace";
+
 function tierColor(t: string) { return t === "green" ? "#10B981" : t === "amber" ? "#F59E0B" : "#EF4444"; }
 function tierBg(t: string) { return t === "green" ? "rgba(16,185,129,0.12)" : t === "amber" ? "rgba(245,158,11,0.11)" : "rgba(239,68,68,0.11)"; }
 function tierBorder(t: string) { return t === "green" ? "rgba(16,185,129,0.4)" : t === "amber" ? "rgba(245,158,11,0.4)" : "rgba(239,68,68,0.4)"; }
@@ -855,7 +857,31 @@ export default function DealPage({ id }: { id: string }) {
                 <div key={m.label} className="bg-[#111118] px-4 py-[15px]">
                   <div className="text-[10px] text-[#6B7280] tracking-[0.05em] uppercase">{m.label}</div>
                   <div className="font-mono text-[25px] font-semibold mt-[7px] tracking-[-0.01em]" style={{ color: m.color }}>
-                    {m.value}
+                    <MetricWithInfo
+                      value={m.value}
+                      label={m.label}
+                      formula={
+                        m.label.includes("Revenue")
+                          ? "Total revenue from the latest reported financial period."
+                          : m.label.includes("EBITDA Margin")
+                          ? "EBITDA / Revenue × 100. Measures operating profitability before interest, taxes, depreciation and amortization."
+                          : m.label.includes("Net Debt")
+                          ? "Total Debt - Cash / EBITDA. Measures leverage capacity."
+                          : m.label.includes("FCF")
+                          ? "Free Cash Flow / Revenue × 100. Measures cash generated after capital expenditures."
+                          : m.label.includes("IRR")
+                          ? "Internal Rate of Return modeled from entry/exit assumptions, growth, and debt schedule."
+                          : "Metric definition"
+                      }
+                      source={
+                        m.label.includes("Revenue") || m.label.includes("EBITDA") || m.label.includes("FCF")
+                          ? "Yahoo Finance API → financial snapshot"
+                          : m.label.includes("IRR")
+                          ? "LBO engine (computed)"
+                          : "Financial snapshot"
+                      }
+                      lastUpdated={new Date().toLocaleString()}
+                    />
                   </div>
                   <div className="font-mono text-[10px] text-[#6B7280] mt-[5px] flex items-center gap-[5px]">
                     <span style={{ color: m.deltaColor }}>{m.delta}</span>
@@ -905,6 +931,7 @@ export default function DealPage({ id }: { id: string }) {
                 {financialsData.net_debt_ebitda != null && (
                   <> with net debt / EBITDA at <span className="text-[#E8E8F0]">{financialsData.net_debt_ebitda.toFixed(1)}x</span></>
                 )}. Run the full pipeline to generate a detailed investment thesis, competitive analysis, and LBO model.
+                <ReasoningTrace steps={dealData?.reasoning_trace || []} />
               </div>
             ) : (
               <div className="border border-dashed border-[#1E1E2E] p-[18px] text-center font-mono text-[10px] text-[#4b5160]">
@@ -1028,21 +1055,27 @@ export default function DealPage({ id }: { id: string }) {
                       <div className="px-3 py-[9px] font-mono text-[10px] tracking-[0.05em] uppercase text-[#6B7280] text-right">Latest</div>
                     </div>
                     {[
-                      { label: "Revenue", val: financialsData.revenue ? (financialsData.revenue / 1e6).toFixed(1) : "—", accent: true },
-                      { label: "EBITDA", val: financialsData.ebitda ? (financialsData.ebitda / 1e6).toFixed(1) : "—", accent: true },
-                      { label: "EBITDA Margin", val: financialsData.ebitda_margin ? `${(financialsData.ebitda_margin * 100).toFixed(1)}%` : "—", accent: false },
-                      { label: "Net Debt", val: financialsData.net_debt ? (financialsData.net_debt / 1e6).toFixed(1) : "—", accent: false, neg: financialsData.net_debt != null && financialsData.net_debt > 0 },
-                      { label: "Net Debt / EBITDA", val: financialsData.net_debt_ebitda ? `${financialsData.net_debt_ebitda.toFixed(1)}x` : "—", accent: false },
-                      { label: "FCF", val: financialsData.fcf ? (financialsData.fcf / 1e6).toFixed(1) : "—", accent: false },
-                      { label: "FCF Yield", val: financialsData.fcf_yield ? `${(financialsData.fcf_yield * 100).toFixed(1)}%` : "—", accent: false },
-                      { label: "Revenue Growth", val: financialsData.revenue_growth ? `${(financialsData.revenue_growth * 100).toFixed(1)}%` : "—", accent: false },
+                      { label: "Revenue", val: financialsData.revenue ? (financialsData.revenue / 1e6).toFixed(1) : "—", accent: true, formula: "Total revenue from the latest reported financial period.", source: "Yahoo Finance API" },
+                      { label: "EBITDA", val: financialsData.ebitda ? (financialsData.ebitda / 1e6).toFixed(1) : "—", accent: true, formula: "Earnings Before Interest, Taxes, Depreciation and Amortization.", source: "Yahoo Finance API" },
+                      { label: "EBITDA Margin", val: financialsData.ebitda_margin ? `${(financialsData.ebitda_margin * 100).toFixed(1)}%` : "—", accent: false, formula: "EBITDA / Revenue × 100", source: "Calculated field" },
+                      { label: "Net Debt", val: financialsData.net_debt ? (financialsData.net_debt / 1e6).toFixed(1) : "—", accent: false, neg: financialsData.net_debt != null && financialsData.net_debt > 0, formula: "Total Debt - Cash", source: "Calculated field" },
+                      { label: "Net Debt / EBITDA", val: financialsData.net_debt_ebitda ? `${financialsData.net_debt_ebitda.toFixed(1)}x` : "—", accent: false, formula: "Net Debt / EBITDA. Measures leverage.", source: "Calculated field" },
+                      { label: "FCF", val: financialsData.fcf ? (financialsData.fcf / 1e6).toFixed(1) : "—", accent: false, formula: "Operating Cash Flow - Capital Expenditures", source: "Calculated field" },
+                      { label: "FCF Yield", val: financialsData.fcf_yield ? `${(financialsData.fcf_yield * 100).toFixed(1)}%` : "—", accent: false, formula: "FCF / Revenue × 100", source: "Calculated field" },
+                      { label: "Revenue Growth", val: financialsData.revenue_growth ? `${(financialsData.revenue_growth * 100).toFixed(1)}%` : "—", accent: false, formula: "YoY revenue change", source: "Yahoo Finance API" },
                     ].map((row) => (
                       <div key={row.label} className="grid grid-cols-[1.6fr_1fr] border-b border-[#1E1E2E] hover:bg-[#111118] transition-colors">
                         <div className="px-3 py-[10px] text-[12.5px]" style={{ fontWeight: row.accent ? 600 : 400, color: row.accent ? "#E8E8F0" : "#9aa0ad" }}>
                           {row.label}
                         </div>
                         <div className="px-3 py-[10px] font-mono text-[12.5px] text-right" style={{ fontWeight: row.accent ? 600 : 400, color: row.accent ? "#C8A96E" : row.neg ? "#EF4444" : "#E8E8F0" }}>
-                          {row.val}
+                          <MetricWithInfo
+                            value={row.val}
+                            label={row.label}
+                            formula={row.formula}
+                            source={row.source}
+                            lastUpdated={new Date().toLocaleString()}
+                          />
                         </div>
                       </div>
                     ))}
@@ -1053,6 +1086,7 @@ export default function DealPage({ id }: { id: string }) {
                     <div className="mt-2 font-mono text-[11px] text-[#4b5160]">Run the financials agent to populate historical statements.</div>
                   </div>
                 )}
+                <ReasoningTrace steps={financialsData?.reasoning_trace || []} />
               </div>
               <div>
                 <h2 className="m-0 mb-3 font-mono text-[11px] tracking-[0.1em] uppercase text-[#6B7280]">Revenue & EBITDA Trend</h2>
@@ -1085,7 +1119,15 @@ export default function DealPage({ id }: { id: string }) {
                       return qoeItems.map((q) => (
                         <div key={q.label} className="flex justify-between text-[12.5px]">
                           <span className="text-[#9aa0ad]">{q.label}</span>
-                          <span className="font-mono" style={{ color: q.color }}>{q.value}</span>
+                          <span className="font-mono" style={{ color: q.color }}>
+                            <MetricWithInfo
+                              value={q.value}
+                              label={q.label}
+                              formula={q.label.includes("growth") ? "YoY change in revenue" : q.label.includes("margin") ? "EBITDA / Revenue × 100" : q.label.includes("yield") ? "FCF / Revenue × 100" : "Net Debt / EBITDA"}
+                              source={q.label.includes("growth") ? "Yahoo Finance API" : "Calculated field"}
+                              lastUpdated={new Date().toLocaleString()}
+                            />
+                          </span>
                         </div>
                       ));
                     })()}
@@ -1214,7 +1256,25 @@ export default function DealPage({ id }: { id: string }) {
                 <div key={o.label} className="bg-[#111118] px-[15px] py-4">
                   <div className="text-[10px] text-[#6B7280] tracking-[0.05em] uppercase">{o.label}</div>
                   <div className="font-mono text-[27px] font-semibold mt-2 tracking-[-0.02em]" style={{ color: o.color }}>
-                    {o.value}
+                    <MetricWithInfo
+                      value={o.value}
+                      label={o.label}
+                      formula={
+                        o.label === "IRR"
+                          ? "Internal Rate of Return: annualized return rate from entry to exit."
+                          : o.label === "MOIC"
+                          ? "Multiple of Invested Capital: Exit Equity / Entry Equity."
+                          : o.label === "Entry EV"
+                          ? "Entry Enterprise Value = Entry Multiple × Entry EBITDA."
+                          : o.label === "Exit EV"
+                          ? "Exit Enterprise Value = Exit Multiple × Exit EBITDA."
+                          : o.label === "Exit Equity"
+                          ? "Exit Equity = Exit EV - Remaining Net Debt."
+                          : "LBO metric"
+                      }
+                      source={lboData?.lbo_result ? "LBO engine (backend)" : "Client-side LBO compute engine"}
+                      lastUpdated={new Date().toLocaleString()}
+                    />
                   </div>
                   <div className="font-mono text-[10px] text-[#6B7280] mt-1">{o.sub}</div>
                 </div>
@@ -1303,6 +1363,7 @@ export default function DealPage({ id }: { id: string }) {
                       </p>
                     </>
                   )}
+                  <ReasoningTrace steps={lboData?.reasoning_trace || []} />
                 </div>
               )}
             </div>
@@ -1366,6 +1427,7 @@ export default function DealPage({ id }: { id: string }) {
                   </tbody>
                 </table>
               </div>
+              <ReasoningTrace steps={competitiveData?.reasoning_trace || []} />
 
               <h2 className="mt-[26px] mb-[13px] font-mono text-[11px] tracking-[0.1em] uppercase text-[#6B7280]">Moat Assessment</h2>
               <div className="grid grid-cols-4 gap-px bg-[#1E1E2E] border border-[#1E1E2E]">
@@ -1438,6 +1500,7 @@ export default function DealPage({ id }: { id: string }) {
                   </div>
                 ))}
               </div>
+              <ReasoningTrace steps={researchData?.reasoning_trace || []} />
             </>
           )}
         </div>
@@ -1614,6 +1677,7 @@ export default function DealPage({ id }: { id: string }) {
                                 )}
                               </>
                             )}
+                            <ReasoningTrace steps={memoData?.reasoning_trace || []} />
                           </div>
                         )}
                       </div>

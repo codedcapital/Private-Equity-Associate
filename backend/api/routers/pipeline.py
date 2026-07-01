@@ -42,6 +42,7 @@ from schemas.agent import (
     PipelineRunRequest,
 )
 
+from schemas.reasoning_trace import ReasoningTraceStep
 from schemas.deal import DealCreate, DealList, DealRead, DealUpdate
 from schemas.company import CompanyRead
 from schemas.financials import FinancialProfile
@@ -81,6 +82,22 @@ async def list_deals_endpoint(
             )
             fin = fin_result.scalar_one_or_none()
 
+            trace: list[ReasoningTraceStep] = []
+            ts = datetime.utcnow().isoformat() + "Z"
+            trace.append(ReasoningTraceStep(timestamp=ts, text=f"Retrieved deal {deal.id} from pipeline database"))
+            if company:
+                trace.append(ReasoningTraceStep(timestamp=ts, text=f"Loaded company: {company.name} ({company.ticker or 'no ticker'})"))
+            if fin:
+                trace.append(ReasoningTraceStep(timestamp=ts, text="Loaded latest financial snapshot"))
+                if fin.ebitda_margin is not None:
+                    trace.append(ReasoningTraceStep(timestamp=ts, text=f"EBITDA margin: {fin.ebitda_margin:.1%}"))
+                if fin.net_debt_ebitda is not None:
+                    trace.append(ReasoningTraceStep(timestamp=ts, text=f"Net Debt / EBITDA: {fin.net_debt_ebitda:.1f}x"))
+            if deal.lbo_irr is not None:
+                trace.append(ReasoningTraceStep(timestamp=ts, text=f"Entry IRR (modeled): {deal.lbo_irr:.1%}"))
+            if deal.lbo_moic is not None:
+                trace.append(ReasoningTraceStep(timestamp=ts, text=f"Entry MOIC: {deal.lbo_moic:.1f}x"))
+
             results.append({
                 "id": deal.id,
                 "company_id": deal.company_id,
@@ -103,6 +120,7 @@ async def list_deals_endpoint(
                     fcf=fin.fcf,
                     fcf_yield=fin.fcf_yield,
                 ).model_dump(mode="json") if fin else None,
+                "reasoning_trace": trace,
             })
 
     return results
@@ -129,6 +147,22 @@ async def get_deal_endpoint(deal_id: int) -> dict:
         )
         fin = fin_result.scalar_one_or_none()
 
+    trace: list[ReasoningTraceStep] = []
+    ts = datetime.utcnow().isoformat() + "Z"
+    trace.append(ReasoningTraceStep(timestamp=ts, text=f"Retrieved deal {deal_id} from pipeline database"))
+    if company:
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Loaded company: {company.name} ({company.ticker or 'no ticker'})"))
+    if fin:
+        trace.append(ReasoningTraceStep(timestamp=ts, text="Loaded latest financial snapshot"))
+        if fin.ebitda_margin is not None:
+            trace.append(ReasoningTraceStep(timestamp=ts, text=f"EBITDA margin: {fin.ebitda_margin:.1%}"))
+        if fin.net_debt_ebitda is not None:
+            trace.append(ReasoningTraceStep(timestamp=ts, text=f"Net Debt / EBITDA: {fin.net_debt_ebitda:.1f}x"))
+    if deal.lbo_irr is not None:
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Entry IRR (modeled): {deal.lbo_irr:.1%}"))
+    if deal.lbo_moic is not None:
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Entry MOIC: {deal.lbo_moic:.1f}x"))
+
     return {
         "id": deal.id,
         "company_id": deal.company_id,
@@ -151,6 +185,7 @@ async def get_deal_endpoint(deal_id: int) -> dict:
             fcf=fin.fcf,
             fcf_yield=fin.fcf_yield,
         ).model_dump(mode="json") if fin else None,
+        "reasoning_trace": trace,
     }
 
 
