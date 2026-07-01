@@ -10,6 +10,7 @@ from enum import Enum as PyEnum
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    Boolean,
     Date,
     DateTime,
     Enum,
