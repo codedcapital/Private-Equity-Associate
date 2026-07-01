@@ -94,8 +94,11 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['evidence_b_id'], ['evidence_items.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
-    op.execute("CREATE TYPE evidence_status AS ENUM ('VERIFIED', 'NEEDS_VALIDATION', 'CONFLICTING', 'UNKNOWN')")
-    op.add_column('evidence_items', sa.Column('evidence_status', sa.Enum('VERIFIED', 'NEEDS_VALIDATION', 'CONFLICTING', 'UNKNOWN', name='evidence_status', create_type=False), nullable=False))
+    op.execute("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'evidence_status') THEN CREATE TYPE evidence_status AS ENUM ('VERIFIED', 'NEEDS_VALIDATION', 'CONFLICTING', 'UNKNOWN'); END IF; END $$;")
+    # Add column as nullable first (existing rows may have nulls), then backfill, then set NOT NULL
+    op.add_column('evidence_items', sa.Column('evidence_status', sa.Enum('VERIFIED', 'NEEDS_VALIDATION', 'CONFLICTING', 'UNKNOWN', name='evidence_status', create_type=False), nullable=True))
+    op.execute("UPDATE evidence_items SET evidence_status = 'UNKNOWN' WHERE evidence_status IS NULL")
+    op.alter_column('evidence_items', 'evidence_status', nullable=False)
     op.add_column('evidence_items', sa.Column('verified_by', sa.Integer(), nullable=True))
     op.add_column('evidence_items', sa.Column('verified_at', sa.DateTime(timezone=True), nullable=True))
     # ### end Alembic commands ###
