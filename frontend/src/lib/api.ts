@@ -297,3 +297,186 @@ export async function getRunStatus(runId: string): Promise<AgentRunStatus> {
 export async function getRun(runId: string): Promise<unknown> {
   return apiCall<unknown>(`/agents/runs/${runId}`);
 }
+
+/* ─── Dashboard ─── */
+export interface DashboardSummary {
+  active_deals: number;
+  avg_score: number | null;
+  ic_ready_count: number;
+  attention_count: number;
+  stage_breakdown: Record<string, number>;
+  last_updated: string;
+}
+
+export interface AttentionDeal {
+  deal_id: number;
+  company_id: number;
+  company_name: string;
+  ticker: string | null;
+  score: number | null;
+  score_change: number | null;
+  score_change_direction: "up" | "down" | null;
+  stage: string;
+  stage_label: string;
+  why: string;
+  confidence: string;
+  updated_at: string;
+  financials_score: number | null;
+  risk_score: number | null;
+  moat_score: number | null;
+  market_score: number | null;
+}
+
+export interface AttentionList {
+  deals: AttentionDeal[];
+}
+
+export async function getDashboardSummary(): Promise<DashboardSummary> {
+  return apiCall<DashboardSummary>("/dashboard/summary");
+}
+
+export async function getAttentionDeals(): Promise<AttentionList> {
+  return apiCall<AttentionList>("/dashboard/attention");
+}
+
+/* ─── Market Pulse ─── */
+export interface MarketPulseItem {
+  key: string;
+  value: string;
+  label?: string | null;
+  direction?: string | null;
+}
+
+export interface MarketPulseData {
+  items: MarketPulseItem[];
+  last_updated: string;
+}
+
+export async function getMarketPulse(): Promise<MarketPulseData> {
+  return apiCall<MarketPulseData>("/market-pulse");
+}
+
+export async function updateMarketPulse(data: MarketPulseData): Promise<MarketPulseData> {
+  return apiCall<MarketPulseData>("/market-pulse", { method: "PUT", json: data });
+}
+
+/* ─── Signals ─── */
+export interface SignalItem {
+  id: number;
+  deal_id: number;
+  company_name?: string | null;
+  signal_type: string;
+  direction?: string | null;
+  title: string;
+  description?: string | null;
+  evidence_url?: string | null;
+  confidence: string;
+  detected_at: string;
+  resolved_at?: string | null;
+  is_dismissed: boolean;
+}
+
+export interface SignalList {
+  signals: SignalItem[];
+}
+
+export async function getSignals(dealId?: number): Promise<SignalList> {
+  const url = dealId ? `/dashboard/signals?deal_id=${dealId}` : "/dashboard/signals";
+  return apiCall<SignalList>(url);
+}
+
+export async function dismissSignal(signalId: number): Promise<{ success: boolean; signal_id: number }> {
+  return apiCall<{ success: boolean; signal_id: number }>(`/dashboard/signals/${signalId}/dismiss`, { method: "POST" });
+}
+
+/* ─── Recently Updated ─── */
+export interface RecentItem {
+  deal_id: number;
+  company_name: string;
+  event_type: string;
+  old_value?: string | null;
+  new_value?: string | null;
+  reason?: string | null;
+  created_at: string;
+}
+
+export interface RecentlyUpdatedResponse {
+  items: RecentItem[];
+}
+
+export async function getRecentlyUpdated(): Promise<RecentlyUpdatedResponse> {
+  return apiCall<RecentlyUpdatedResponse>("/dashboard/recently-updated");
+}
+
+/* ─── Activity Summary ─── */
+export interface ActivitySummary {
+  financials_refreshed: number;
+  research_updated: number;
+  news_analyzed: number;
+  models_rebuilt: number;
+  total_runs: number;
+  date: string;
+}
+
+export async function getActivitySummary(): Promise<ActivitySummary> {
+  return apiCall<ActivitySummary>("/dashboard/activity-summary");
+}
+
+/* ─── Industry Watch ─── */
+export interface SectorItem {
+  sector: string;
+  count: number;
+}
+
+export interface IndustryWatchResponse {
+  sectors: SectorItem[];
+}
+
+export async function getIndustryWatch(): Promise<IndustryWatchResponse> {
+  return apiCall<IndustryWatchResponse>("/dashboard/industry");
+}
+
+/* ─── Search ─── */
+export interface SearchResult {
+  type: string;
+  id: number | string;
+  title: string;
+  subtitle?: string | null;
+  url: string;
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+}
+
+export async function globalSearch(query: string): Promise<SearchResponse> {
+  if (!query || query.length < 2) return { results: [] };
+  return apiCall<SearchResponse>(`/dashboard/search?q=${encodeURIComponent(query)}`);
+}
+
+/* ─── Outstanding Questions ─── */
+export interface QuestionItem {
+  id: number;
+  deal_id?: number | null;
+  company_name: string;
+  category: string;
+  question: string;
+  answer?: string | null;
+  status: string;
+  created_at: string;
+}
+
+export interface QuestionsResponse {
+  questions: QuestionItem[];
+}
+
+export async function getOutstandingQuestions(status: string = "pending"): Promise<QuestionsResponse> {
+  return apiCall<QuestionsResponse>(`/intelligence/questions?status=${status}`);
+}
+
+export async function updateQuestionStatus(questionId: number, status: string, answer?: string): Promise<{ success: boolean; question_id: number }> {
+  return apiCall<{ success: boolean; question_id: number }>(`/intelligence/questions/${questionId}`, {
+    method: "PATCH",
+    json: { status, answer },
+  });
+}

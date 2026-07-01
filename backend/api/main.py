@@ -16,9 +16,11 @@ from api.middleware import RequestLoggingMiddleware
 from api.routers.admin import router as admin_router
 from api.routers.companies import router as companies_router
 from api.routers.competitive import router as competitive_router
+from api.routers.dashboard import router as dashboard_router
 from api.routers.financials import router as financials_router
 from api.routers.intelligence import router as intelligence_router
 from api.routers.lbo import router as lbo_router
+from api.routers.market_pulse import router as market_pulse_router
 from api.routers.memo import router as memo_router
 from api.routers.pipeline import agents_router, router as pipeline_router
 from api.routers.research import router as research_router
@@ -92,6 +94,8 @@ app.include_router(agents_router)
 app.include_router(intelligence_router)
 app.include_router(admin_router)
 app.include_router(companies_router)
+app.include_router(market_pulse_router)
+app.include_router(dashboard_router)
 
 # ── Root health ──────────────────────────────────────────────────────────────
 

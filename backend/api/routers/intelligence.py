@@ -17,6 +17,7 @@ from typing import Any
 import logging
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -34,7 +35,9 @@ from db.crud import (
     get_source_confidence_by_id,
     list_evidence_items,
     list_intelligence_questions,
+    list_intelligence_questions_by_status,
     list_source_confidence,
+    resolve_intelligence_question,
     update_evidence_item,
     update_intelligence_hub,
     update_intelligence_question,
@@ -512,6 +515,34 @@ async def generate_intelligence_hub(company_id: int) -> IntelligenceHubResponse:
 # ── Questions ─────────────────────────────────────────────────────────────────
 
 
+class QuestionUpdate(BaseModel):
+    status: str | None = None
+    answer: str | None = None
+
+
+@router.get("/questions")
+async def get_questions(status: str | None = "pending") -> dict:
+    """Return outstanding questions across all deals, with company name."""
+    async with async_session_factory() as session:
+        questions = await list_intelligence_questions_by_status(session, status=status)
+        result = []
+        for q in questions:
+            hub = q.hub
+            company_name = hub.company.name if hub and hub.company else "Unknown"
+            deal_id = hub.deal_id if hub else None
+            result.append({
+                "id": q.id,
+                "deal_id": deal_id,
+                "company_name": company_name,
+                "category": q.category,
+                "question": q.question,
+                "answer": q.answer,
+                "status": q.status,
+                "created_at": q.created_at.isoformat() if q.created_at else None,
+            })
+        return {"questions": result}
+
+
 @router.post("/{company_id}/questions", response_model=IntelligenceQuestionSchema)
 async def add_question(
     company_id: int, payload: IntelligenceQuestionCreate
@@ -558,6 +589,14 @@ async def update_question(
             raise HTTPException(status_code=404, detail="Question not found")
 
         update_data = payload.model_dump(exclude_unset=True)
+        status = update_data.pop("status", None)
+
+        if status is not None:
+            if status == "resolved":
+                await resolve_intelligence_question(session, question_id)
+            else:
+                await update_intelligence_question(session, question_id, status=status)
+
         if update_data:
             await update_intelligence_question(session, question_id, **update_data)
 

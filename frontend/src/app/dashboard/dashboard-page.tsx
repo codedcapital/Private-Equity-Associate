@@ -1,61 +1,36 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
-import Link from "next/link";
+import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useToast } from "@/components/toast";
-import { listDeals, type DealRead } from "@/lib/api";
-import { MetricWithInfo } from "@/components/info-flyout";
-
-/* ─── Color helpers ─── */
-function tierColor(t: string) {
-  return t === "green" ? "#10B981" : t === "amber" ? "#F59E0B" : t === "gray" ? "#6B7280" : "#EF4444";
-}
-function tierBg(t: string) {
-  return t === "green" ? "rgba(16,185,129,0.12)" : t === "amber" ? "rgba(245,158,11,0.11)" : t === "gray" ? "rgba(107,114,128,0.10)" : "rgba(239,68,68,0.11)";
-}
-function tierBorder(t: string) {
-  return t === "green" ? "rgba(16,185,129,0.4)" : t === "amber" ? "rgba(245,158,11,0.4)" : t === "gray" ? "rgba(107,114,128,0.3)" : "rgba(239,68,68,0.4)";
-}
-
-/* ─── PE number formatting ─── */
-function formatRevenue(v: number | null | undefined): string {
-  if (v == null || v === 0) return "—";
-  if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
-  if (v >= 1e6) return `$${(v / 1e6).toFixed(0)}M`;
-  return `$${v.toFixed(0)}`;
-}
-
-function formatEV(v: number | null | undefined): string {
-  if (v == null || v === 0) return "—";
-  if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
-  if (v >= 1e6) return `$${(v / 1e6).toFixed(0)}M`;
-  return `$${v.toFixed(0)}`;
-}
-
-function formatMargin(v: number | null | undefined): string {
-  if (v == null) return "—";
-  const pct = v * 100;
-  return `${pct.toFixed(1)}%`;
-}
-
-function marginTier(v: number | null | undefined): string {
-  if (v == null) return "gray";
-  const pct = v * 100;
-  if (pct < 0) return "red";
-  if (pct < 10) return "amber";
-  if (pct < 20) return "gray";
-  return "green";
-}
-
-function irrTier(irr: number | null | undefined): string {
-  if (irr == null) return "gray";
-  return irr >= 0.25 ? "green" : irr >= 0.18 ? "amber" : "red";
-}
-
-function formatIRR(irr: number | null | undefined): string {
-  if (irr == null) return "—";
-  return `${(irr * 100).toFixed(1)}%`;
-}
+import {
+  listDeals,
+  getDashboardSummary,
+  getAttentionDeals,
+  getSignals,
+  getRecentlyUpdated,
+  getActivitySummary,
+  getIndustryWatch,
+  getOutstandingQuestions,
+  globalSearch,
+  type AttentionDeal,
+  type DashboardSummary,
+  type DealRead,
+  type SignalItem,
+  type RecentItem,
+  type ActivitySummary,
+  type SectorItem,
+  type QuestionItem,
+} from "@/lib/api";
+import KpiCards from "@/components/dashboard/KpiCards";
+import AttentionTable from "@/components/dashboard/AttentionTable";
+import PipelineMiniChart from "@/components/dashboard/PipelineMiniChart";
+import MarketPulse from "@/components/dashboard/MarketPulse";
+import SignalsFeed from "@/components/dashboard/SignalsFeed";
+import RecentlyUpdated from "@/components/dashboard/RecentlyUpdated";
+import OutstandingQuestions from "@/components/dashboard/OutstandingQuestions";
+import DailyActivity from "@/components/dashboard/DailyActivity";
+import GlobalSearch from "@/components/dashboard/GlobalSearch";
 
 function stageLabel(stage: string): string {
   const map: Record<string, string> = {
@@ -69,336 +44,330 @@ function stageLabel(stage: string): string {
   return map[stage] ?? stage.toUpperCase();
 }
 
-function stageColor(stage: string): string {
-  const map: Record<string, string> = {
-    sourcing: "#6B7280",
-    diligence: "#2DD4BF",
-    ic_ready: "#C8A96E",
-    passed: "#EF4444",
-    rejected: "#EF4444",
-    closed: "#10B981",
-  };
-  return map[stage] ?? "#6B7280";
-}
-
-function columnForStage(stage: string): string {
-  const map: Record<string, string> = {
-    sourcing: "Sourcing",
-    diligence: "Diligence",
-    ic_ready: "IC Ready",
-    passed: "Passed",
-    rejected: "Passed",
-    closed: "Closed",
-  };
-  return map[stage] ?? "Sourcing";
-}
-
-function dotForColumn(title: string): string {
-  const map: Record<string, string> = {
-    Sourcing: "#6B7280",
-    Diligence: "#2DD4BF",
-    "IC Ready": "#C8A96E",
-    Passed: "#EF4444",
-    Closed: "#10B981",
-  };
-  return map[title] ?? "#6B7280";
-}
-
-function relativeTime(ts: string | null | undefined): string {
-  if (!ts) return "—";
-  const d = new Date(ts);
-  const now = new Date();
-  const mins = Math.floor((now.getTime() - d.getTime()) / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d`;
-  const months = Math.floor(days / 30);
-  return `${months}mo`;
-}
-
 export default function DashboardPage() {
   const { addToast } = useToast();
-  const [search, setSearch] = useState("");
+  const router = useRouter();
   const [deals, setDeals] = useState<DealRead[] | null>(null);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [attentionDeals, setAttentionDeals] = useState<AttentionDeal[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const q = search.trim().toLowerCase();
+  const [signals, setSignals] = useState<SignalItem[] | null>(null);
+  const [recentlyUpdated, setRecentlyUpdated] = useState<RecentItem[] | null>(null);
+  const [activitySummary, setActivitySummary] = useState<ActivitySummary | null>(null);
+  const [industryWatch, setIndustryWatch] = useState<SectorItem[] | null>(null);
+  const [questions, setQuestions] = useState<QuestionItem[] | null>(null);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    listDeals()
-      .then((data) => {
-        if (cancelled) return;
-        setDeals(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("Failed to fetch deals:", err);
-        setError(err instanceof Error ? err.message : String(err));
-        setLoading(false);
+
+    async function fetchData() {
+      let summaryData: DashboardSummary | null = null;
+      let attentionData: AttentionDeal[] | null = null;
+      let dealsData: DealRead[] | null = null;
+
+      // Try new endpoints first; gracefully fall back on 404
+      try {
+        summaryData = await getDashboardSummary();
+      } catch (e: any) {
+        if (e?.response?.status !== 404) {
+          console.warn("Dashboard summary endpoint not available:", e?.message);
+        }
+      }
+
+      try {
+        const attentionList = await getAttentionDeals();
+        attentionData = attentionList.deals ?? [];
+      } catch (e: any) {
+        if (e?.response?.status !== 404) {
+          console.warn("Attention deals endpoint not available:", e?.message);
+        }
+      }
+
+      // Always fetch base deal data as fallback
+      try {
+        dealsData = await listDeals();
+      } catch (e: any) {
+        console.error("Failed to fetch deals:", e);
+        setError(e instanceof Error ? e.message : String(e));
         addToast("error", "Backend offline", "Could not load deals. Ensure the API is running.");
-      });
+        if (!cancelled) setLoading(false);
+        return;
+      }
+
+      if (cancelled) return;
+      setDeals(dealsData);
+      if (summaryData) setSummary(summaryData);
+      if (attentionData) setAttentionDeals(attentionData);
+      setLoading(false);
+
+      // Parallel fetches for new Phase 3 & 4 endpoints (non-blocking)
+      try {
+        const [signalsRes, recentRes, activityRes, industryRes, questionsRes] = await Promise.all([
+          getSignals().catch(() => null),
+          getRecentlyUpdated().catch(() => null),
+          getActivitySummary().catch(() => null),
+          getIndustryWatch().catch(() => null),
+          getOutstandingQuestions().catch(() => null),
+        ]);
+        if (signalsRes) setSignals(signalsRes.signals);
+        if (recentRes) setRecentlyUpdated(recentRes.items);
+        if (activityRes) setActivitySummary(activityRes);
+        if (industryRes) setIndustryWatch(industryRes.sectors);
+        if (questionsRes) setQuestions(questionsRes.questions);
+      } catch (e) {
+        console.warn("Some dashboard extensions failed to load", e);
+      }
+    }
+
+    fetchData();
     return () => { cancelled = true; };
   }, [addToast]);
 
-  const pipeline = useMemo(() => {
-    const columns = ["Sourcing", "Diligence", "IC Ready", "Passed", "Closed"];
+  // Keyboard shortcut: Cmd/Ctrl + K to open global search
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchModalOpen(true);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
-    const dealMap = (deals ?? []).map((d) => {
-      const col = columnForStage(d.stage);
-      const irr = d.lbo_irr;
-      const irrT = irrTier(irr);
-      const mgn = d.financials?.ebitda_margin;
-      const mgnT = marginTier(mgn);
-      return {
-        id: String(d.id),
-        name: d.company?.name ?? `Deal ${d.id}`,
-        ticker: d.company?.ticker ?? "",
-        sector: d.company?.sector ?? "Unknown",
-        revenue: formatRevenue(d.financials?.revenue),
-        margin: formatMargin(mgn),
-        marginTier: mgnT,
-        ev: formatEV(d.entry_ev),
-        irr: formatIRR(irr),
-        irrTier: irrT,
-        updated: relativeTime(d.last_updated ?? null),
-        statusLabel: stageLabel(d.stage),
-        statusColor: stageColor(d.stage),
-        stage: d.stage,
-        hq: d.company?.geography ?? "",
-        _column: col,
-      };
-    }).filter((d) => !q || d.name.toLowerCase().includes(q) || d.sector.toLowerCase().includes(q) || d.ticker.toLowerCase().includes(q));
 
-    return columns.map((title) => {
-      const colDeals = dealMap.filter((d) => d._column === title);
-      return { title, count: colDeals.length, dot: dotForColumn(title), deals: colDeals, empty: colDeals.length === 0 };
+  // Fallback KPIs computed from deals
+  const kpis = useMemo(() => {
+    const d = deals ?? [];
+    const active = d.filter((deal) => deal.stage !== "passed" && deal.stage !== "closed");
+    const icReady = d.filter((deal) => deal.stage === "ic_ready");
+    const highIrr = d.filter((deal) => deal.lbo_irr != null && deal.lbo_irr >= 0.25);
+    const attention = icReady.length + highIrr.length;
+
+    return {
+      activeDeals: summary?.active_deals ?? active.length,
+      avgScore: summary?.avg_score ?? 75,
+      icReadyCount: summary?.ic_ready_count ?? icReady.length,
+      attentionCount: summary?.attention_count ?? attention,
+      stageBreakdown:
+        summary?.stage_breakdown ??
+        d.reduce((acc, deal) => {
+          acc[deal.stage] = (acc[deal.stage] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
+    };
+  }, [deals, summary]);
+
+  // Fallback attention deals computed from deals
+  const computedAttentionDeals = useMemo(() => {
+    if (attentionDeals != null) return attentionDeals;
+    const d = deals ?? [];
+    const active = d.filter((deal) => deal.stage !== "passed" && deal.stage !== "closed");
+
+    const sorted = [...active].sort((a, b) => {
+      if (a.stage === "ic_ready" && b.stage !== "ic_ready") return -1;
+      if (b.stage === "ic_ready" && a.stage !== "ic_ready") return 1;
+      return (b.lbo_irr ?? 0) - (a.lbo_irr ?? 0);
     });
-  }, [deals, q]);
 
-  const totalDeals = useMemo(() => pipeline.reduce((sum, col) => sum + col.count, 0), [pipeline]);
-  const activeDeals = useMemo(() =>
-    pipeline
-      .filter((c) => c.title !== "Passed" && c.title !== "Closed")
-      .reduce((sum, col) => sum + col.count, 0),
-    [pipeline]
-  );
-  const closedDeals = useMemo(() => pipeline.find((c) => c.title === "Closed")?.count ?? 0, [pipeline]);
-  const passedDeals = useMemo(() => pipeline.find((c) => c.title === "Passed")?.count ?? 0, [pipeline]);
+    const top = sorted.slice(0, 5);
+    const mockChanges = [4, -2, 6, 0, -3];
+    const mockDirections: ("up" | "down" | null)[] = ["up", "down", "up", null, "down"];
+
+    return top.map((deal, i) => {
+      const score =
+        deal.lbo_irr != null ? Math.min(95, Math.round(deal.lbo_irr * 100 * 2.5)) : null;
+      const why =
+        deal.stage === "ic_ready"
+          ? "IC Ready — strong IRR and clean diligence"
+          : deal.lbo_irr != null && deal.lbo_irr >= 0.25
+            ? "High IRR potential"
+            : "Above threshold metrics";
+
+      return {
+        deal_id: deal.id,
+        company_id: deal.company_id,
+        company_name: deal.company?.name ?? `Deal ${deal.id}`,
+        ticker: deal.company?.ticker ?? null,
+        score,
+        score_change: mockChanges[i] ?? 0,
+        score_change_direction: mockDirections[i] ?? null,
+        stage: deal.stage,
+        stage_label: stageLabel(deal.stage),
+        why,
+        confidence: "LOW",
+        updated_at: deal.last_updated ?? deal.created_at ?? new Date().toISOString(),
+        financials_score: null,
+        risk_score: null,
+        moat_score: null,
+        market_score: null,
+      } as AttentionDeal;
+    });
+  }, [deals, attentionDeals]);
+
+  const pipelineStages = useMemo(() => {
+    const stages = [
+      { name: "Sourcing", stage: "sourcing", color: "#6B7280" },
+      { name: "Diligence", stage: "diligence", color: "#2DD4BF" },
+      { name: "IC Ready", stage: "ic_ready", color: "#C8A96E" },
+      { name: "Closed", stage: "closed", color: "#10B981" },
+    ];
+    return stages.map((s) => ({
+      name: s.name,
+      count: kpis.stageBreakdown[s.stage] ?? 0,
+      color: s.color,
+    }));
+  }, [kpis.stageBreakdown]);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-5 p-5">
+        <div className="h-8 bg-[#111118] w-[200px]" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="bg-[#111118] border border-[#1E1E2E] p-4 h-[80px]" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <div className="lg:col-span-2 bg-[#111118] border border-[#1E1E2E] h-[200px]" />
+          <div className="lg:col-span-1 bg-[#111118] border border-[#1E1E2E] h-[200px]" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-5">
+        <div className="border border-dashed border-[#EF4444] p-[30px] text-center">
+          <div className="text-sm text-[#EF4444]">Failed to load dashboard</div>
+          <div className="mt-2 font-mono text-[11px] text-[#4b5160]">{error}</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div>
-      {/* Top bar */}
-      <div className="h-[52px] flex items-center gap-[14px] px-5 border-b border-[#1E1E2E] bg-[#0A0A0F] sticky top-0 z-[5]">
-        <div className="flex items-center gap-2 flex-1 max-w-[420px] bg-[#111118] border border-[#1E1E2E] px-[10px] py-[6px]">
+    <div className="flex flex-col gap-5 p-5">
+      {/* Greeting */}
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold text-[#E8E8F0] tracking-[-0.01em]">
+          Good Morning, Aditya
+        </h1>
+        <div className="font-mono text-[11px] text-[#6B7280]">
+          {kpis.activeDeals} active deals · {kpis.attentionCount} require attention · {kpis.icReadyCount} IC-ready this week
+        </div>
+      </div>
+
+      {/* Portfolio KPIs + Market Pulse */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="lg:col-span-2">
+          <KpiCards
+            activeDeals={kpis.activeDeals}
+            avgScore={kpis.avgScore}
+            icReadyCount={kpis.icReadyCount}
+            attentionCount={kpis.attentionCount}
+          />
+        </div>
+        <div className="lg:col-span-1">
+          <MarketPulse />
+        </div>
+      </div>
+
+      {/* Attention Table */}
+      <div>
+        <div className="text-[13px] font-semibold text-[#E8E8F0] mb-3">🔥 Deals Requiring Attention</div>
+        <AttentionTable
+          deals={computedAttentionDeals}
+          onDealClick={(id) => router.push(`/deal/${id}`)}
+        />
+      </div>
+
+      {/* Signals + Recently Updated */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div>
+          <div className="text-[13px] font-semibold text-[#E8E8F0] mb-3">📡 Latest Signals</div>
+          {signals ? (
+            <SignalsFeed signals={signals} />
+          ) : (
+            <div className="bg-[#111118] border border-[#1E1E2E] p-4 text-[11px] text-[#6B7280]">
+              Loading signals…
+            </div>
+          )}
+        </div>
+        <div>
+          <div className="text-[13px] font-semibold text-[#E8E8F0] mb-3">📝 Recently Updated</div>
+          {recentlyUpdated ? (
+            <RecentlyUpdated items={recentlyUpdated} />
+          ) : (
+            <div className="bg-[#111118] border border-[#1E1E2E] p-4 text-[11px] text-[#6B7280]">
+              Loading recent updates…
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Outstanding Questions + Pipeline Funnel */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div>
+          <div className="text-[13px] font-semibold text-[#E8E8F0] mb-3">✅ Outstanding Questions</div>
+          {questions ? (
+            <OutstandingQuestions questions={questions} />
+          ) : (
+            <div className="bg-[#111118] border border-[#1E1E2E] p-4 text-[11px] text-[#6B7280]">
+              Loading questions…
+            </div>
+          )}
+        </div>
+        <div>
+          <div className="text-[13px] font-semibold text-[#E8E8F0] mb-3">📊 Pipeline Funnel</div>
+          <PipelineMiniChart stages={pipelineStages} />
+        </div>
+      </div>
+
+      {/* Daily Activity Summary */}
+      <div>
+        <div className="text-[13px] font-semibold text-[#E8E8F0] mb-3">📊 Daily Activity Summary</div>
+        {activitySummary ? (
+          <DailyActivity summary={activitySummary} />
+        ) : (
+          <div className="bg-[#111118] border border-[#1E1E2E] p-4 text-[11px] text-[#6B7280]">
+            Loading activity summary…
+          </div>
+        )}
+      </div>
+
+      {/* Global Search Trigger */}
+      <div className="bg-[#111118] border border-[#1E1E2E] p-4">
+        <div className="flex items-center gap-2 bg-[#0A0A0F] border border-[#1E1E2E] px-[10px] py-[8px] cursor-pointer"
+             onClick={() => setSearchModalOpen(true)}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7280" strokeWidth="1.8">
             <circle cx="11" cy="11" r="7" />
             <path d="M21 21l-4.3-4.3" />
           </svg>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search companies, sectors, tickers…"
-            className="flex-1 bg-transparent border-none outline-none text-[#E8E8F0] text-[13px] font-sans"
-          />
-          <span className="font-mono text-[10px] text-[#4b5160] border border-[#1E1E2E] px-[5px] py-[1px]">⌘K</span>
-        </div>
-        <div className="flex-1" />
-        <Link
-          href="/sourcing"
-          className="flex items-center gap-[7px] bg-[#111118] border border-[#1E1E2E] text-[#E8E8F0] px-[13px] py-[7px] text-xs font-medium cursor-pointer hover:border-[#2c2c42] transition-colors"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2DD4BF" strokeWidth="1.8">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M21 21l-4.3-4.3" />
-          </svg>
-          Sourcing
-        </Link>
-        <button
-          onClick={() => addToast("info", "Add Company", "Use the Sourcing page to discover and add new companies.")}
-          className="flex items-center gap-[7px] bg-[#C8A96E] border border-[#C8A96E] text-[#0A0A0F] px-[14px] py-[7px] text-xs font-semibold cursor-pointer hover:bg-[#d8bd86] transition-colors"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-          Add Company
-        </button>
-      </div>
-
-      {/* Page heading */}
-      <div className="flex items-baseline gap-[14px] px-5 pt-[18px] pb-[14px]">
-        <h1 className="m-0 text-lg font-semibold tracking-[-0.01em]">IC Pipeline</h1>
-        <span className="font-mono text-[11px] text-[#6B7280]">
-          {activeDeals} active · {closedDeals} closed · {passedDeals} passed · updated live
-        </span>
-        <div className="flex-1" />
-        <div className="flex gap-[14px] font-mono text-[11px] text-[#6B7280]">
-          <span>FUND IV · $2.1B AUM</span>
-          <span className="text-[#1E1E2E]">|</span>
-          <span>Q3 2025 DEPLOYMENT</span>
+          <span className="flex-1 text-[#6B7280] text-[13px] font-sans select-none">
+            Search across deals, research, and memos…
+          </span>
+          <span className="text-[10px] text-[#4b5160] bg-[#1E1E2E] px-[6px] py-[2px] rounded font-mono">
+            ⌘K
+          </span>
         </div>
       </div>
 
-      {error && !loading && (
-        <div className="px-5 pb-4">
-          <div className="border border-dashed border-[#EF4444] p-[30px] text-center">
-            <div className="text-sm text-[#EF4444]">Failed to load deals</div>
-            <div className="mt-2 font-mono text-[11px] text-[#4b5160]">{error}</div>
-          </div>
-        </div>
-      )}
-
-      {!loading && !error && totalDeals === 0 && (
-        <div className="px-5 pb-4">
-          <div className="border border-dashed border-[#1E1E2E] p-[30px] text-center">
-            <div className="text-sm text-[#9aa0ad]">No deals in the pipeline</div>
-            <div className="mt-2 font-mono text-[11px] text-[#4b5160]">Use the Sourcing page to discover and add companies.</div>
-          </div>
-        </div>
-      )}
-
-      {q && totalDeals === 0 && deals && deals.length > 0 && (
-        <div className="px-5 pb-4">
-          <div className="border border-dashed border-[#1E1E2E] p-[30px] text-center">
-            <div className="text-sm text-[#9aa0ad]">No deals match &quot;{search}&quot;</div>
-            <div className="mt-2 font-mono text-[11px] text-[#4b5160]">Try a different company name, sector, or ticker</div>
-          </div>
-        </div>
-      )}
-
-      {/* Loading skeleton */}
-      {loading && (
-        <div className="px-5 pb-4">
-          <div className="grid grid-cols-5 gap-px bg-[#1E1E2E] border border-[#1E1E2E]">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="bg-[#0A0A0F] p-3 space-y-2">
-                <div className="h-3 bg-[#15151f] w-1/2" />
-                <div className="h-20 bg-[#15151f] w-full" />
-                <div className="h-20 bg-[#15151f] w-full" />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Kanban */}
-      {!loading && (
-        <div className="overflow-x-auto">
-          <div className="grid grid-cols-5 gap-px bg-[#1E1E2E] border-t border-b border-[#1E1E2E] min-w-[1350px]">
-            {pipeline.map((col) => (
-              <div key={col.title} className="bg-[#0A0A0F] min-h-[calc(100vh-132px)]">
-                <div className="flex items-center justify-between px-[14px] py-[11px] border-b border-[#1E1E2E] sticky top-[52px] bg-[#0A0A0F] z-[2]">
-                  <div className="flex items-center gap-2">
-                    <span className="w-[7px] h-[7px]" style={{ background: col.dot }} />
-                    <span className="font-mono text-[11px] font-semibold tracking-[0.08em] uppercase text-[#E8E8F0]">
-                      {col.title}
-                    </span>
-                  </div>
-                  <span className="font-mono text-[11px] text-[#6B7280]">{col.count}</span>
-                </div>
-                <div className="flex flex-col gap-2 p-3">
-                  {col.deals.map((d) => (
-                    <Link
-                      key={d.id}
-                      href={`/deal/${d.id}`}
-                      className="bg-[#111118] border border-[#1E1E2E] p-3 cursor-pointer hover:border-[#2c2c42] transition-colors block"
-                    >
-                      {/* Name row */}
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="text-[15px] font-semibold text-[#E8E8F0] leading-[1.25]">{d.name}</div>
-                          <div className="flex items-center gap-1.5 mt-1">
-                            {d.ticker && (
-                              <span className="font-mono text-[9px] font-semibold tracking-[0.06em] uppercase text-[#C8A96E] border border-[#1E1E2E] px-[5px] py-[1px]">
-                                {d.ticker}
-                              </span>
-                            )}
-                            <span className="font-mono text-[9px] tracking-[0.06em] uppercase text-[#6B7280]">
-                              {d.sector}
-                            </span>
-                          </div>
-                        </div>
-                        {d.irr !== "—" && (
-                          <div
-                            className="flex-none font-mono text-[10px] font-semibold px-[6px] py-[2px] border whitespace-nowrap"
-                            style={{
-                              color: tierColor(d.irrTier),
-                              background: tierBg(d.irrTier),
-                              borderColor: tierBorder(d.irrTier),
-                            }}
-                          >
-                            {d.irr} IRR
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Metrics row */}
-                      <div className="mt-[11px] flex gap-0 border-t border-[#1E1E2E] pt-[9px]">
-                        <div className="flex-1">
-                          <div className="text-[9px] text-[#6B7280] tracking-[0.06em] uppercase">Revenue</div>
-                          <div className="font-mono text-[13px] font-semibold text-[#C8A96E] mt-[2px]">
-                            <MetricWithInfo
-                              value={d.revenue}
-                              label="Revenue"
-                              formula="Total revenue from the latest reported financial period."
-                              source="Yahoo Finance API → financial snapshot"
-                              lastUpdated={d.updated ?? null}
-                            />
-                          </div>
-                        </div>
-                        <div className="flex-1 border-l border-[#1E1E2E] pl-[11px]">
-                          <div className="text-[9px] text-[#6B7280] tracking-[0.06em] uppercase">EBITDA</div>
-                          <div className="font-mono text-[13px] font-semibold mt-[2px]" style={{ color: tierColor(d.marginTier) }}>
-                            <MetricWithInfo
-                              value={d.margin}
-                              label="EBITDA Margin"
-                              formula="EBITDA / Revenue × 100. Measures operating profitability before interest, taxes, depreciation and amortization."
-                              source="Calculated field (financial snapshot)"
-                              lastUpdated={d.updated ?? null}
-                            />
-                          </div>
-                        </div>
-                        <div className="flex-1 border-l border-[#1E1E2E] pl-[11px]">
-                          <div className="text-[9px] text-[#6B7280] tracking-[0.06em] uppercase">Entry EV</div>
-                          <div className="font-mono text-[13px] font-semibold text-[#E8E8F0] mt-[2px]">
-                            <MetricWithInfo
-                              value={d.ev}
-                              label="Entry EV"
-                              formula="Entry Enterprise Value recorded for this deal. Represents the total value of the company at acquisition."
-                              source="Deal record (pipeline database)"
-                              lastUpdated={d.updated ?? null}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Footer row */}
-                      <div className="mt-[10px] flex items-center justify-between">
-                        <span className="font-mono text-[9px] text-[#6B7280]">{d.updated}</span>
-                        <span className="flex items-center gap-1 font-mono text-[9px]" style={{ color: d.statusColor }}>
-                          <span className="w-[5px] h-[5px]" style={{ background: d.statusColor }} />
-                          {d.statusLabel}
-                        </span>
-                      </div>
-                    </Link>
-                  ))}
-                  {col.empty && (
-                    <div className="border border-dashed border-[#1E1E2E] p-[18px] text-center font-mono text-[10px] text-[#4b5160]">
-                      No deals
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Global Search Modal */}
+      <GlobalSearch
+        isOpen={searchModalOpen}
+        onClose={() => setSearchModalOpen(false)}
+        onSearch={globalSearch}
+        onResultSelect={(url: string) => {
+          setSearchModalOpen(false);
+          router.push(url);
+        }}
+      />
     </div>
   );
 }

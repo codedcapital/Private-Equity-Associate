@@ -16,10 +16,12 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    desc,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -152,6 +154,8 @@ class IntelligenceQuestion(Base):
     answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -413,3 +417,134 @@ class CompetitorCompany(Base):
 
     # Relationships
     company: Mapped["Company"] = relationship("Company", back_populates="competitors")
+
+
+class ConfidenceLevel(str, PyEnum):
+    """Confidence level for a deal score."""
+
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    INSUFFICIENT = "INSUFFICIENT"
+
+
+class DealScore(Base):
+    """Composite score and dimension breakdown for a deal."""
+
+    __tablename__ = "deal_scores"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(
+        ForeignKey("deal_pipeline.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    financials_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    moat_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    market_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    risk_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    confidence: Mapped[str] = mapped_column(String(20), nullable=False, default="INSUFFICIENT")
+    methodology_version: Mapped[str] = mapped_column(String(20), nullable=False, default="1.0.0")
+    override_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    override_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # Relationships
+    deal: Mapped["Deal"] = relationship("Deal")
+
+
+class ScoreHistory(Base):
+    """Historical record of score changes for a deal."""
+
+    __tablename__ = "score_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(
+        ForeignKey("deal_pipeline.id", ondelete="CASCADE"), nullable=False
+    )
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    financials: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    moat: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    market: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    risk: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    confidence: Mapped[str] = mapped_column(String(20), nullable=False)
+    methodology_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    event_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_score_history_deal_time", "deal_id", desc("created_at")),
+    )
+
+
+class ActivityLog(Base):
+    """Audit log of activities for a deal."""
+
+    __tablename__ = "activity_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(
+        ForeignKey("deal_pipeline.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    event_metadata: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Signal(Base):
+    """A signal detected for a deal (earnings surprise, valuation gap, etc.)."""
+
+    __tablename__ = "signals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int] = mapped_column(
+        ForeignKey("deal_pipeline.id", ondelete="CASCADE"), nullable=False
+    )
+    signal_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    direction: Mapped[str | None] = mapped_column(String(10), nullable=True)  # up, down, neutral
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    evidence_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[str] = mapped_column(String(20), nullable=False, default="MEDIUM")
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_dismissed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    event_metadata: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+
+    deal: Mapped["Deal"] = relationship("Deal")
+
+    __table_args__ = (
+        Index("idx_signals_deal_time", "deal_id", desc("detected_at")),
+        Index("idx_signals_type", "signal_type"),
+    )
+
+
+class MarketPulseSetting(Base):
+    """Configurable market pulse setting (e.g., recession probability, sector sentiment)."""
+
+    __tablename__ = "market_pulse_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    direction: Mapped[str | None] = mapped_column(String(10), nullable=True)  # up, down
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

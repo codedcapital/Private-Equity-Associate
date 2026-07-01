@@ -32,6 +32,7 @@ class AgentRunResponse(BaseModel):
     status: AgentStatus
     message: str
     reasoning_trace: list[ReasoningTraceStep] | None = None
+    moat_signals: dict | None = None
 
 
 class PipelineRunRequest(BaseModel):

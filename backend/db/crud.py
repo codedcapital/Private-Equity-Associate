@@ -4,15 +4,18 @@ from datetime import date, datetime
 from typing import Any, Sequence
 
 from sqlalchemy import select, text
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
+    ActivityLog,
     AgentLog,
     AgentStatus,
     Company,
     CompanySource,
     CompetitorCompany,
     Deal,
+    DealScore,
     DealStage,
     EvidenceItem,
     Filing,
@@ -21,6 +24,9 @@ from db.models import (
     ICMemo,
     IntelligenceHub,
     IntelligenceQuestion,
+    MarketPulseSetting,
+    ScoreHistory,
+    Signal,
     SourceConfidence,
 )
 
@@ -691,6 +697,7 @@ async def create_intelligence_question(
     answer: str | None = None,
     confidence: float | None = None,
     sort_order: int = 0,
+    status: str = "pending",
 ) -> IntelligenceQuestion:
     q = IntelligenceQuestion(
         hub_id=hub_id,
@@ -699,6 +706,7 @@ async def create_intelligence_question(
         answer=answer,
         confidence=confidence,
         sort_order=sort_order,
+        status=status,
     )
     session.add(q)
     await session.commit()
@@ -751,6 +759,37 @@ async def delete_intelligence_question(session: AsyncSession, question_id: int) 
     await session.delete(q)
     await session.commit()
     return True
+
+
+async def list_intelligence_questions_by_status(
+    session: AsyncSession,
+    status: str | None = None,
+) -> Sequence[IntelligenceQuestion]:
+    stmt = (
+        select(IntelligenceQuestion)
+        .join(IntelligenceHub, IntelligenceQuestion.hub_id == IntelligenceHub.id)
+        .options(
+            selectinload(IntelligenceQuestion.hub).selectinload(IntelligenceHub.company)
+        )
+    )
+    if status is not None:
+        stmt = stmt.where(IntelligenceQuestion.status == status)
+    stmt = stmt.order_by(IntelligenceQuestion.sort_order, IntelligenceQuestion.created_at)
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def resolve_intelligence_question(
+    session: AsyncSession, question_id: int
+) -> IntelligenceQuestion | None:
+    q = await get_intelligence_question_by_id(session, question_id)
+    if not q:
+        return None
+    q.status = "resolved"
+    q.resolved_at = datetime.now()
+    await session.commit()
+    await session.refresh(q)
+    return q
 
 
 # ── Evidence Item ───────────────────────────────────────────────────────────
@@ -937,6 +976,294 @@ async def delete_source_confidence(session: AsyncSession, sc_id: int) -> bool:
     return True
 
 
+# ── DealScore ──────────────────────────────────────────────────────────────
+
+async def get_deal_score(session: AsyncSession, deal_id: int) -> DealScore | None:
+    result = await session.execute(
+        select(DealScore).where(DealScore.deal_id == deal_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def create_deal_score(
+    session: AsyncSession,
+    deal_id: int,
+    score: int | None = None,
+    financials_score: int | None = None,
+    moat_score: int | None = None,
+    market_score: int | None = None,
+    risk_score: int | None = None,
+    confidence: str = "INSUFFICIENT",
+    methodology_version: str = "1.0.0",
+    override_score: int | None = None,
+    override_by: int | None = None,
+    override_reason: str | None = None,
+) -> DealScore:
+    deal_score = DealScore(
+        deal_id=deal_id,
+        score=score,
+        financials_score=financials_score,
+        moat_score=moat_score,
+        market_score=market_score,
+        risk_score=risk_score,
+        confidence=confidence,
+        methodology_version=methodology_version,
+        override_score=override_score,
+        override_by=override_by,
+        override_reason=override_reason,
+    )
+    session.add(deal_score)
+    await session.commit()
+    await session.refresh(deal_score)
+    return deal_score
+
+
+async def update_deal_score(
+    session: AsyncSession, deal_id: int, **kwargs: Any
+) -> DealScore | None:
+    deal_score = await get_deal_score(session, deal_id)
+    if not deal_score:
+        return None
+    for key, value in kwargs.items():
+        if hasattr(deal_score, key):
+            setattr(deal_score, key, value)
+    await session.commit()
+    await session.refresh(deal_score)
+    return deal_score
+
+
+# ── ScoreHistory ───────────────────────────────────────────────────────────
+
+async def create_score_history(
+    session: AsyncSession,
+    deal_id: int,
+    score: int,
+    financials: int | None = None,
+    moat: int | None = None,
+    market: int | None = None,
+    risk: int | None = None,
+    confidence: str = "INSUFFICIENT",
+    methodology_version: str = "1.0.0",
+    reason: str | None = None,
+    event_type: str | None = None,
+) -> ScoreHistory:
+    history = ScoreHistory(
+        deal_id=deal_id,
+        score=score,
+        financials=financials,
+        moat=moat,
+        market=market,
+        risk=risk,
+        confidence=confidence,
+        methodology_version=methodology_version,
+        reason=reason,
+        event_type=event_type,
+    )
+    session.add(history)
+    await session.commit()
+    await session.refresh(history)
+    return history
+
+
+async def list_score_history(
+    session: AsyncSession,
+    deal_id: int,
+    limit: int = 10,
+) -> Sequence[ScoreHistory]:
+    stmt = (
+        select(ScoreHistory)
+        .where(ScoreHistory.deal_id == deal_id)
+        .order_by(ScoreHistory.created_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def get_latest_score_history(
+    session: AsyncSession, deal_id: int
+) -> ScoreHistory | None:
+    result = await session.execute(
+        select(ScoreHistory)
+        .where(ScoreHistory.deal_id == deal_id)
+        .order_by(ScoreHistory.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+# ── ActivityLog ────────────────────────────────────────────────────────────
+
+async def create_activity_log(
+    session: AsyncSession,
+    deal_id: int,
+    event_type: str,
+    old_value: str | None = None,
+    new_value: str | None = None,
+    reason: str | None = None,
+    event_metadata: dict | None = None,
+) -> ActivityLog:
+    log = ActivityLog(
+        deal_id=deal_id,
+        event_type=event_type,
+        old_value=old_value,
+        new_value=new_value,
+        reason=reason,
+        event_metadata=event_metadata,
+    )
+    session.add(log)
+    await session.commit()
+    await session.refresh(log)
+    return log
+
+
+async def list_activity_logs(
+    session: AsyncSession,
+    deal_id: int | None = None,
+    limit: int = 50,
+) -> Sequence[ActivityLog]:
+    stmt = select(ActivityLog).order_by(ActivityLog.created_at.desc()).limit(limit)
+    if deal_id is not None:
+        stmt = stmt.where(ActivityLog.deal_id == deal_id)
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+from schemas.signals import SignalBase, SignalCreate, SignalRead, SignalList, SignalDismiss
+from schemas.market_pulse import MarketPulseItem, MarketPulseData
+
+
+# ── Signal ───────────────────────────────────────────────────────────────────
+
+async def create_signal(
+    session: AsyncSession,
+    deal_id: int,
+    signal_type: str,
+    title: str,
+    direction: str | None = None,
+    description: str | None = None,
+    evidence_url: str | None = None,
+    evidence_text: str | None = None,
+    confidence: str = "MEDIUM",
+    event_metadata: dict | None = None,
+) -> Signal:
+    signal = Signal(
+        deal_id=deal_id,
+        signal_type=signal_type,
+        title=title,
+        direction=direction,
+        description=description,
+        evidence_url=evidence_url,
+        evidence_text=evidence_text,
+        confidence=confidence,
+        event_metadata=event_metadata,
+    )
+    session.add(signal)
+    await session.commit()
+    await session.refresh(signal)
+    return signal
+
+
+async def get_signal_by_id(session: AsyncSession, signal_id: int) -> Signal | None:
+    result = await session.execute(select(Signal).where(Signal.id == signal_id))
+    return result.scalar_one_or_none()
+
+
+async def list_signals(
+    session: AsyncSession,
+    deal_id: int | None = None,
+    signal_type: str | None = None,
+    is_dismissed: bool | None = None,
+    limit: int = 50,
+) -> Sequence[Signal]:
+    stmt = select(Signal).order_by(Signal.detected_at.desc()).limit(limit)
+    if deal_id is not None:
+        stmt = stmt.where(Signal.deal_id == deal_id)
+    if signal_type is not None:
+        stmt = stmt.where(Signal.signal_type == signal_type)
+    if is_dismissed is not None:
+        stmt = stmt.where(Signal.is_dismissed == is_dismissed)
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def update_signal(
+    session: AsyncSession, signal_id: int, **kwargs: Any
+) -> Signal | None:
+    signal = await get_signal_by_id(session, signal_id)
+    if not signal:
+        return None
+    for key, value in kwargs.items():
+        if hasattr(signal, key):
+            setattr(signal, key, value)
+    await session.commit()
+    await session.refresh(signal)
+    return signal
+
+
+async def dismiss_signal(session: AsyncSession, signal_id: int) -> Signal | None:
+    signal = await get_signal_by_id(session, signal_id)
+    if not signal:
+        return None
+    signal.is_dismissed = True
+    await session.commit()
+    await session.refresh(signal)
+    return signal
+
+
+# ── MarketPulseSetting ───────────────────────────────────────────────────────
+
+async def create_market_pulse_setting(
+    session: AsyncSession,
+    key: str,
+    value: str,
+    label: str | None = None,
+    direction: str | None = None,
+) -> MarketPulseSetting:
+    setting = MarketPulseSetting(key=key, value=value, label=label, direction=direction)
+    session.add(setting)
+    await session.commit()
+    await session.refresh(setting)
+    return setting
+
+
+async def get_market_pulse_setting(
+    session: AsyncSession, key: str
+) -> MarketPulseSetting | None:
+    result = await session.execute(
+        select(MarketPulseSetting).where(MarketPulseSetting.key == key)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_market_pulse_settings(
+    session: AsyncSession,
+) -> Sequence[MarketPulseSetting]:
+    result = await session.execute(select(MarketPulseSetting))
+    return result.scalars().all()
+
+
+async def upsert_market_pulse_setting(
+    session: AsyncSession,
+    key: str,
+    value: str,
+    label: str | None = None,
+    direction: str | None = None,
+) -> MarketPulseSetting:
+    """Create or update a market pulse setting."""
+    existing = await get_market_pulse_setting(session, key)
+    if existing:
+        existing.value = value
+        if label is not None:
+            existing.label = label
+        if direction is not None:
+            existing.direction = direction
+        await session.commit()
+        await session.refresh(existing)
+        return existing
+    return await create_market_pulse_setting(session, key, value, label, direction)
+
+
 # ── General utilities ──────────────────────────────────────────────────────
 
 async def truncate_all_tables(session: AsyncSession) -> None:
@@ -945,7 +1272,8 @@ async def truncate_all_tables(session: AsyncSession) -> None:
         text(
             "TRUNCATE TABLE evidence_items, intelligence_questions, source_confidence, "
             "intelligence_hubs, filing_chunks, filings, financials, "
-            "competitor_companies, deal_pipeline, ic_memos, agent_logs, companies "
+            "competitor_companies, deal_pipeline, ic_memos, agent_logs, "
+            "signals, market_pulse_settings, companies "
             "RESTART IDENTITY CASCADE"
         )
     )

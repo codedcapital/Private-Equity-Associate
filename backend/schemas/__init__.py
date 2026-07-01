@@ -18,6 +18,12 @@ from schemas.competitor import (
     CompetitorList,
     CompetitorRead,
 )
+from schemas.dashboard import (
+    AttentionDeal,
+    AttentionList,
+    DashboardSummary,
+    ScoreRefreshResponse,
+)
 from schemas.deal import (
     DealCreate,
     DealList,
@@ -36,9 +42,11 @@ from schemas.financials import (
     FinancialProfile,
     FinancialRead,
 )
+from schemas.market_pulse import MarketPulseData, MarketPulseItem
 from schemas.reasoning_trace import (
     ReasoningTraceStep,
 )
+from schemas.signals import SignalBase, SignalCreate, SignalDismiss, SignalList, SignalRead
 
 
 __all__ = [
@@ -78,4 +86,18 @@ __all__ = [
     "CompetitorList",
     # Reasoning Trace
     "ReasoningTraceStep",
+    # Dashboard
+    "DashboardSummary",
+    "AttentionDeal",
+    "AttentionList",
+    "ScoreRefreshResponse",
+    # Signals
+    "SignalBase",
+    "SignalCreate",
+    "SignalRead",
+    "SignalList",
+    "SignalDismiss",
+    # Market Pulse
+    "MarketPulseItem",
+    "MarketPulseData",
 ]

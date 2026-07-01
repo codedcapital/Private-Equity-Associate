@@ -29,6 +29,9 @@ def _build_competitive_trace(competitive_map: Any, source: str = "agent") -> lis
         trace.append(ReasoningTraceStep(timestamp=ts, text=f"Mapped {count} competitors from structured data"))
     if isinstance(competitive_map, dict) and competitive_map.get("moat_assessment"):
         trace.append(ReasoningTraceStep(timestamp=ts, text="Evaluated moat across 5 dimensions (switching costs, network effects, IP, distribution, brand)"))
+    if isinstance(competitive_map, dict) and competitive_map.get("moat_signals"):
+        signal_count = len(competitive_map["moat_signals"].get("signals", []))
+        trace.append(ReasoningTraceStep(timestamp=ts, text=f"Extracted {signal_count} structured moat signals with evidence anchors"))
     trace.append(ReasoningTraceStep(timestamp=ts, text="Formatted competitive landscape for IC review"))
     return trace
 
@@ -67,6 +70,7 @@ async def get_competitive_for_company(company_id: int) -> dict:
                 "status": "complete",
                 "message": "Competitive analysis loaded from cache",
                 "competitive_map": cmap,
+                "moat_signals": cmap.get("moat_signals") if isinstance(cmap, dict) else None,
                 "errors": log.errors,
                 "reasoning_trace": _build_competitive_trace(cmap, source="cache"),
             }
@@ -91,6 +95,7 @@ async def get_competitive_for_company(company_id: int) -> dict:
                         "status": "complete",
                         "message": "Competitive analysis loaded from pipeline checkpoint",
                         "competitive_map": competitive_map,
+                        "moat_signals": competitive_map.get("moat_signals") if isinstance(competitive_map, dict) else None,
                         "errors": state.get("errors"),
                         "reasoning_trace": _build_competitive_trace(competitive_map, source="pipeline checkpoint"),
                     }
@@ -113,6 +118,7 @@ async def get_competitive_for_company(company_id: int) -> dict:
         "status": status,
         "message": message,
         "competitive_map": final_state.get("competitive_map"),
+        "moat_signals": final_state.get("competitive_map", {}).get("moat_signals") if isinstance(final_state.get("competitive_map"), dict) else None,
         "errors": final_state.get("errors"),
         "reasoning_trace": _build_competitive_trace(final_state.get("competitive_map"), source="agent run"),
     }
@@ -134,5 +140,10 @@ async def run_competitive_agent(request: AgentRunRequest) -> AgentRunResponse:
         if has_errors
         else "Competitive analysis completed successfully"
     )
-    return AgentRunResponse(run_id=run_id, status=status, message=message)
+    return AgentRunResponse(
+        run_id=run_id,
+        status=status,
+        message=message,
+        moat_signals=final_state.get("competitive_map", {}).get("moat_signals") if isinstance(final_state.get("competitive_map"), dict) else None,
+    )
 

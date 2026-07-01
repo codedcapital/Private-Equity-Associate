@@ -81,6 +81,7 @@ class IntelligenceQuestionUpdate(BaseModel):
     answer: str | None = None
     confidence: float | None = Field(None, ge=0.0, le=1.0)
     sort_order: int | None = None
+    status: str | None = None
 
 
 class SourceConfidenceSchema(BaseModel):

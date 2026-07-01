@@ -130,6 +130,26 @@ class MoatAssessment(BaseModel):
     data_sources: list[str] = Field(..., description="List of data sources used")
 
 
+class MoatSignal(BaseModel):
+    """A single structured moat signal with evidence anchoring."""
+
+    signal_type: str = Field(..., description="One of: switching_costs, network_effects, ip_proprietary, distribution, brand, overall")
+    present: bool = Field(..., description="Whether this signal is present/detected")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence that the signal is present (0.0-1.0)")
+    evidence: str = Field(..., description="Direct evidence quote from the source (10-K, earnings call, research) that supports this signal. Must be a verbatim or near-verbatim quote, not a paraphrase.")
+    evidence_source: str = Field(..., description="Source of the evidence, e.g., '10-K', 'Earnings Call', 'Competitive Agent', 'Research Report'")
+    strength: str = Field(..., description="One of: strong, moderate, weak, none")
+
+
+class MoatSignals(BaseModel):
+    """Structured moat signals extracted from competitive analysis."""
+
+    signals: list[MoatSignal] = Field(..., description="All detected moat signals")
+    overall_moat_rating: str = Field(..., description="One of: wide, narrow, none")
+    overall_confidence: float = Field(..., ge=0.0, le=1.0)
+    data_sources: list[str] = Field(..., description="List of sources used")
+
+
 # ── Free data enrichment helpers ───────────────────────────────────────────────
 
 async def _wikidata_enrich(company_name: str) -> dict[str, Any]:
@@ -1366,6 +1386,99 @@ async def assess_moat(state: DealState) -> DealState:
     return state
 
 
+async def extract_moat_signals(state: DealState) -> DealState:
+    """Node 4b: Extract structured, evidence-anchored moat signals from the LLM assessment."""
+    competitive_map = state.get("competitive_map", {})
+    moat_data = competitive_map.get("moat_assessment", {}) if isinstance(competitive_map, dict) else {}
+
+    if not moat_data or moat_data.get("overall_moat", "").startswith("Unable"):
+        state["moat_signals"] = MoatSignals(
+            signals=[],
+            overall_moat_rating="none",
+            overall_confidence=0.0,
+            data_sources=state.get("competitor_sources", ["unknown"]),
+        ).model_dump()
+        return state
+
+    target_name = state.get("company_name", "the target")
+    competitors = state.get("competitors", [])
+    competitor_names = [c.get("name", "Unknown") for c in competitors[:5]]
+
+    # Build context from the prose moat assessment
+    moat_text = f"""
+    Switching Costs: {moat_data.get('switching_costs', '')}
+    Network Effects: {moat_data.get('network_effects', '')}
+    IP / Proprietary Tech: {moat_data.get('ip_proprietary_tech', '')}
+    Distribution Advantages: {moat_data.get('distribution_advantages', '')}
+    Brand / Reputation: {moat_data.get('brand_reputation', '')}
+    Overall Moat: {moat_data.get('overall_moat', '')}
+    """
+
+    llm = LLMClient()
+    system_prompt = (
+        "You are a PE competitive intelligence analyst. Given a prose moat assessment for a target company, "
+        "extract structured moat signals. For EACH signal, you MUST provide a direct evidence quote from the assessment text. "
+        "The evidence field must contain a verbatim or near-verbatim excerpt from the provided text, NOT a paraphrase or summary. "
+        "If the text does not contain specific evidence for a signal, set present=false and evidence='No direct evidence found in source.' "
+        "Return ONLY valid JSON matching the MoatSignals schema."
+    )
+    user_prompt = (
+        f"Target Company: {target_name}\n"
+        f"Key Competitors: {', '.join(competitor_names)}\n\n"
+        f"Moat Assessment Text:\n{moat_text}\n\n"
+        "Extract structured moat signals. Return ONLY valid JSON."
+    )
+
+    try:
+        parsed = await llm.chat_structured(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_model=MoatSignals,
+        )
+        signals_data = parsed.model_dump()
+    except Exception as exc:
+        logger.warning("LLM moat signal extraction failed: %s", exc)
+        # Fallback: create signals from the prose assessment using simple keyword matching
+        signals = []
+        for field, signal_type in [
+            ("switching_costs", "switching_costs"),
+            ("network_effects", "network_effects"),
+            ("ip_proprietary_tech", "ip_proprietary"),
+            ("distribution_advantages", "distribution"),
+            ("brand_reputation", "brand"),
+        ]:
+            text = moat_data.get(field, "")
+            if text and not text.startswith("Unable"):
+                present = any(word in text.lower() for word in ["strong", "high", "significant", "robust", "durable"])
+                strength = "strong" if present else "weak"
+                signals.append(MoatSignal(
+                    signal_type=signal_type,
+                    present=present,
+                    confidence=0.6 if present else 0.4,
+                    evidence=text[:200] if text else "No evidence available",
+                    evidence_source="Competitive Agent",
+                    strength=strength,
+                ).model_dump())
+
+        overall = moat_data.get("overall_moat", "")
+        overall_rating = "wide" if "wide" in overall.lower() or "strong" in overall.lower() or "durable" in overall.lower() else "narrow" if "narrow" in overall.lower() or "moderate" in overall.lower() else "none"
+
+        signals_data = MoatSignals(
+            signals=signals,
+            overall_moat_rating=overall_rating,
+            overall_confidence=moat_data.get("confidence_score", 0.5),
+            data_sources=state.get("competitor_sources", ["unknown"]),
+        ).model_dump()
+
+    state["moat_signals"] = signals_data
+
+    # Also store in competitive_map for easy access
+    if isinstance(competitive_map, dict):
+        competitive_map["moat_signals"] = signals_data
+
+    return state
+
+
 async def produce_competitive_evidence(state: DealState) -> DealState:
     """Node 5: Produce structured EvidenceModule for the Decision Engine."""
     competitive_map = state.get("competitive_map", {})
@@ -1501,13 +1614,15 @@ builder.add_node("identify_competitors", identify_competitors)
 builder.add_node("extract_profiles", extract_profiles)
 builder.add_node("build_matrix", build_matrix)
 builder.add_node("assess_moat", assess_moat)
+builder.add_node("extract_moat_signals", extract_moat_signals)
 builder.add_node("produce_competitive_evidence", produce_competitive_evidence)
 
 builder.set_entry_point("identify_competitors")
 builder.add_edge("identify_competitors", "extract_profiles")
 builder.add_edge("extract_profiles", "build_matrix")
 builder.add_edge("build_matrix", "assess_moat")
-builder.add_edge("assess_moat", "produce_competitive_evidence")
+builder.add_edge("assess_moat", "extract_moat_signals")
+builder.add_edge("extract_moat_signals", "produce_competitive_evidence")
 builder.add_edge("produce_competitive_evidence", END)
 
 competitive_graph = builder.compile()
