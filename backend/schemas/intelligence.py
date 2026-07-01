@@ -136,6 +136,7 @@ class IntelligenceHubResponse(BaseModel):
     deal_id: int | None = None
     status: str  # draft, generated, reviewed
     executive_briefing: str | None = None
+    decision_output: dict | None = None
     questions: list[IntelligenceQuestionSchema] = []
     source_confidence: list[SourceConfidenceSchema] = []
     comparable_companies: list[ComparableCompanySchema] = []

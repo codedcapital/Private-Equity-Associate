@@ -1366,6 +1366,134 @@ async def assess_moat(state: DealState) -> DealState:
     return state
 
 
+async def produce_competitive_evidence(state: DealState) -> DealState:
+    """Node 5: Produce structured EvidenceModule for the Decision Engine."""
+    competitive_map = state.get("competitive_map", {})
+    competitors = state.get("competitors", [])
+    moat_data = competitive_map.get("moat_assessment", {}) if isinstance(competitive_map, dict) else {}
+
+    from schemas.evidence import EvidenceMetric, EvidenceModule
+
+    metrics: list[EvidenceMetric] = []
+    warnings: list[str] = []
+    insights: list[str] = []
+    sources: list[str] = ["Competitive Agent"]
+
+    # Switching Costs
+    switching = moat_data.get("switching_costs", "")
+    if switching and not switching.startswith("Unable"):
+        is_supporting = "high" in switching.lower() or "strong" in switching.lower()
+        metrics.append(EvidenceMetric(
+            name="Switching Costs",
+            value="High" if is_supporting else "Low",
+            direction="stable",
+            confidence=0.80,
+            is_supporting=is_supporting,
+            is_contradictory=not is_supporting,
+            evidence_text=switching[:200],
+            source="Competitive Agent",
+            source_type="api",
+        ))
+        insights.append(f"Switching costs: {switching[:80]}")
+
+    # Pricing Power
+    pricing = moat_data.get("distribution_advantages", "")
+    if pricing and not pricing.startswith("Unable"):
+        is_supporting = "high" in pricing.lower() or "strong" in pricing.lower()
+        metrics.append(EvidenceMetric(
+            name="Pricing Power",
+            value="High" if is_supporting else "Low",
+            direction="stable",
+            confidence=0.70,
+            is_supporting=is_supporting,
+            is_contradictory=not is_supporting,
+            evidence_text=pricing[:200],
+            source="Competitive Agent",
+            source_type="api",
+        ))
+
+    # Competitive Moat
+    overall = moat_data.get("overall_moat", "")
+    if overall and not overall.startswith("Unable"):
+        is_supporting = "strong" in overall.lower() or "durable" in overall.lower() or "wide" in overall.lower()
+        metrics.append(EvidenceMetric(
+            name="Competitive Moat",
+            value="Strong" if is_supporting else "Weak",
+            direction="stable",
+            confidence=0.75,
+            is_supporting=is_supporting,
+            is_contradictory=not is_supporting,
+            evidence_text=overall[:200],
+            source="Competitive Agent",
+            source_type="api",
+        ))
+        insights.append(f"Moat assessment: {overall[:80]}")
+
+    # Competitor count
+    if competitors and isinstance(competitors, list):
+        comp_count = len(competitors)
+        metrics.append(EvidenceMetric(
+            name="Competitor Count",
+            value=str(comp_count),
+            direction="stable",
+            confidence=0.80,
+            is_supporting=comp_count < 10,  # Fewer competitors = less fragmentation
+            is_contradictory=comp_count > 20,
+            evidence_text=f"{comp_count} competitors identified across the landscape.",
+            source="Competitive Agent",
+            source_type="api",
+        ))
+        insights.append(f"{comp_count} competitors mapped")
+
+    # Network Effects
+    network = moat_data.get("network_effects", "")
+    if network and not network.startswith("Unable"):
+        is_supporting = "high" in network.lower() or "strong" in network.lower()
+        metrics.append(EvidenceMetric(
+            name="Network Effects",
+            value="Strong" if is_supporting else "Weak",
+            direction="stable",
+            confidence=0.65,
+            is_supporting=is_supporting,
+            is_contradictory=not is_supporting,
+            evidence_text=network[:200],
+            source="Competitive Agent",
+            source_type="api",
+        ))
+
+    # IP / Technology
+    ip = moat_data.get("ip_proprietary_tech", "")
+    if ip and not ip.startswith("Unable"):
+        is_supporting = "high" in ip.lower() or "strong" in ip.lower() or "patent" in ip.lower()
+        metrics.append(EvidenceMetric(
+            name="IP / Technology",
+            value="Strong" if is_supporting else "Weak",
+            direction="stable",
+            confidence=0.70,
+            is_supporting=is_supporting,
+            is_contradictory=not is_supporting,
+            evidence_text=ip[:200],
+            source="Competitive Agent",
+            source_type="api",
+        ))
+
+    avg_confidence = sum(m.confidence for m in metrics) / len(metrics) if metrics else 0.0
+    confidence_score = competitive_map.get("confidence_score", avg_confidence) if isinstance(competitive_map, dict) else avg_confidence
+
+    module = EvidenceModule(
+        module_type="competitive",
+        company_id=state.get("company_id", 0),
+        metrics=metrics,
+        overall_confidence=round(confidence_score, 2),
+        key_insights=insights[:5],
+        warnings=warnings[:5],
+        sources=sources,
+    )
+
+    state["competitive_evidence_module"] = module.model_dump(mode="json")
+    return state
+
+
 # ── Graph wiring ─────────────────────────────────────────────────────────────
 
 builder = StateGraph(DealState)
@@ -1373,12 +1501,14 @@ builder.add_node("identify_competitors", identify_competitors)
 builder.add_node("extract_profiles", extract_profiles)
 builder.add_node("build_matrix", build_matrix)
 builder.add_node("assess_moat", assess_moat)
+builder.add_node("produce_competitive_evidence", produce_competitive_evidence)
 
 builder.set_entry_point("identify_competitors")
 builder.add_edge("identify_competitors", "extract_profiles")
 builder.add_edge("extract_profiles", "build_matrix")
 builder.add_edge("build_matrix", "assess_moat")
-builder.add_edge("assess_moat", END)
+builder.add_edge("assess_moat", "produce_competitive_evidence")
+builder.add_edge("produce_competitive_evidence", END)
 
 competitive_graph = builder.compile()
 

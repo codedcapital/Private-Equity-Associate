@@ -14,6 +14,7 @@ Endpoints:
 
 from datetime import datetime
 from typing import Any
+import logging
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
@@ -53,8 +54,10 @@ from schemas.intelligence import (
     SourceConfidenceSchema,
     SourceConfidenceUpdate,
 )
+from schemas.evidence import DecisionOutput, EvidenceModule
 
 router = APIRouter(prefix="/intelligence", tags=["intelligence"])
+logger = logging.getLogger(__name__)
 
 
 # ── Helper: build full hub response with nested relationships ──────────────────
@@ -123,6 +126,7 @@ async def _build_hub_response(hub_id: int) -> IntelligenceHubResponse:
             deal_id=hub.deal_id,
             status=hub.status,
             executive_briefing=hub.executive_briefing,
+            decision_output=hub.decision_output,
             questions=questions,
             source_confidence=source_conf,
             comparable_companies=comparable_companies,
@@ -700,3 +704,106 @@ async def list_source_confidence_endpoint(company_id: int) -> list[SourceConfide
 
         items = await list_source_confidence(session, hub_id=hub.id)
         return [SourceConfidenceSchema.model_validate(sc) for sc in items]
+
+
+# ── Decision Engine endpoints ───────────────────────────────────────────────────
+
+
+@router.post("/{company_id}/decision")
+async def generate_decision(company_id: int) -> DecisionOutput:
+    """Run the Decision Engine on all available evidence modules for a company.
+
+    Collects EvidenceModules from the agent state (financial, research,
+    competitive, valuation) and produces an Investment Score, Confidence
+    Score, and Recommendation.
+    """
+    from services.decision_engine import DecisionEngine
+
+    async with async_session_factory() as session:
+        hub = await get_hub_by_company(session, company_id)
+        if not hub:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No intelligence hub for company_id={company_id}",
+            )
+
+        # Try to load evidence modules from hub decision_output cache first
+        modules: list[EvidenceModule] = []
+        if hub.decision_output and isinstance(hub.decision_output, dict):
+            cached_modules = hub.decision_output.get("modules")
+            if isinstance(cached_modules, list):
+                for raw in cached_modules:
+                    try:
+                        modules.append(EvidenceModule.model_validate(raw))
+                    except Exception:
+                        pass
+
+        # If no cached modules, try to read from agent_logs or current state
+        if not modules:
+            from db.models import AgentLog
+            result = await session.execute(
+                select(AgentLog)
+                .where(AgentLog.company_id == company_id)
+                .order_by(AgentLog.created_at.desc())
+            )
+            log = result.scalar_one_or_none()
+            if log and log.output_data:
+                state = log.output_data if isinstance(log.output_data, dict) else {}
+                for key in [
+                    "financial_evidence_module",
+                    "research_evidence_module",
+                    "competitive_evidence_module",
+                    "lbo_evidence_module",
+                ]:
+                    raw = state.get(key)
+                    if raw:
+                        try:
+                            modules.append(EvidenceModule.model_validate(raw))
+                        except Exception as val_exc:
+                            logger.warning("Failed to validate %s: %s", key, val_exc)
+
+        if not modules:
+            raise HTTPException(
+                status_code=400,
+                detail="No evidence modules available. Run the full pipeline first.",
+            )
+
+        try:
+            decision = DecisionEngine.decide(modules, include_llm_synthesis=True)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Decision engine failed: {exc}",
+            ) from exc
+
+        # Cache decision output on hub
+        hub.decision_output = decision.model_dump(mode="json")
+        await session.commit()
+
+        return decision
+
+
+@router.get("/{company_id}/decision")
+async def get_decision(company_id: int) -> DecisionOutput:
+    """Return the cached decision output for a company."""
+    async with async_session_factory() as session:
+        hub = await get_hub_by_company(session, company_id)
+        if not hub:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No intelligence hub for company_id={company_id}",
+            )
+
+        if not hub.decision_output:
+            raise HTTPException(
+                status_code=404,
+                detail="No decision has been generated yet. POST /decision first.",
+            )
+
+        try:
+            return DecisionOutput.model_validate(hub.decision_output)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Cached decision is corrupted: {exc}",
+            ) from exc

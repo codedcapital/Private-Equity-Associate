@@ -372,6 +372,80 @@ async def memo_node(state: DealState) -> dict[str, Any]:
         return {"errors": state.get("errors", []) + [f"Memo generation failed: {exc}"]}
 
 
+# ── Node 6: decision ──────────────────────────────────────────────────────────
+
+
+async def decision_node(state: DealState) -> dict[str, Any]:
+    """Collect all EvidenceModules and call the Decision Engine.
+
+    Produces an Investment Score, Confidence Score, and Recommendation
+    that powers the Intelligence Hub decision view.
+    """
+    from schemas.evidence import EvidenceModule, DecisionOutput
+    from services.decision_engine import DecisionEngine
+
+    modules: list[EvidenceModule] = []
+    for key in [
+        "financial_evidence_module",
+        "research_evidence_module",
+        "competitive_evidence_module",
+        "lbo_evidence_module",
+    ]:
+        raw = state.get(key)
+        if raw:
+            try:
+                modules.append(EvidenceModule.model_validate(raw))
+            except Exception as val_exc:
+                logger.warning("Failed to validate %s: %s", key, val_exc)
+
+    if not modules:
+        logger.warning("No evidence modules available for decision engine")
+        return {}
+
+    try:
+        decision = DecisionEngine.decide(modules, include_llm_synthesis=True)
+    except Exception as exc:
+        logger.warning("Decision engine failed: %s", exc)
+        return {"errors": state.get("errors", []) + [f"Decision engine failed: {exc}"]}
+
+    # Write decision to hub
+    try:
+        from services.intelligence_hub_writer import HubWriter
+        writer = HubWriter(company_id=state.get("company_id"))
+        await writer.ensure_hub()
+        await writer.add_question(
+            category="decision",
+            question="What is the investment recommendation?",
+            answer=f"{decision.recommendation} (Score: {decision.investment_score}/100, Confidence: {decision.confidence_score:.0%})",
+            confidence=decision.confidence_score,
+            sort_order=1,
+        )
+        for strength in decision.top_strengths[:3]:
+            await writer.add_evidence(
+                question_text="What is the investment recommendation?",
+                text=strength,
+                source="Decision Engine",
+                source_type="calculated",
+                is_supporting=True,
+                confidence=decision.confidence_score,
+            )
+        for concern in decision.top_concerns[:3]:
+            await writer.add_evidence(
+                question_text="What is the investment recommendation?",
+                text=concern,
+                source="Decision Engine",
+                source_type="calculated",
+                is_supporting=False,
+                confidence=decision.confidence_score,
+            )
+        await writer.set_source_confidence("Decision Engine", "calculated")
+    except Exception as hub_exc:
+        logger.warning("Failed to write decision to Intelligence Hub: %s", hub_exc)
+
+    await _checkpoint_after_node(state, {"decision": decision.model_dump(mode="json")})
+    return {"decision": decision.model_dump(mode="json")}
+
+
 # ── Graph wiring ──────────────────────────────────────────────────────────────
 
 builder = StateGraph(DealState)
@@ -380,13 +454,15 @@ builder.add_node("research_competitive", research_competitive_node)
 builder.add_node("financials", financials_node)
 builder.add_node("lbo", lbo_node)
 builder.add_node("memo", memo_node)
+builder.add_node("decision", decision_node)
 
 builder.set_entry_point("sourcing")
 builder.add_edge("sourcing", "research_competitive")
 builder.add_edge("research_competitive", "financials")
 builder.add_edge("financials", "lbo")
 builder.add_edge("lbo", "memo")
-builder.add_edge("memo", END)
+builder.add_edge("memo", "decision")
+builder.add_edge("decision", END)
 
 graph = builder.compile()
 

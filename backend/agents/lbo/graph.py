@@ -287,44 +287,101 @@ async def interpret(state: DealState) -> DealState:
             "[LLM interpretation unavailable — API key not configured]"
         )
 
-    # ── Write to Intelligence Hub ───────────────────────────────────────
-    try:
-        from services.intelligence_hub_writer import HubWriter
-        writer = HubWriter(company_id=state.get("company_id"))
-        await writer.ensure_hub()
-        lbo_results = state.get("lbo_results")
-        if lbo_results and isinstance(lbo_results, dict):
-            base = lbo_results.get("base")
-            lbo_parts = []
-            if base:
-                irr = base.get("irr") if isinstance(base, dict) else getattr(base, "irr", None)
-                moic = base.get("moic") if isinstance(base, dict) else getattr(base, "moic", None)
-                if irr is not None:
-                    lbo_parts.append(f"Base IRR: {irr:.1%}")
-                if moic is not None:
-                    lbo_parts.append(f"Base MOIC: {moic:.2f}x")
-            if lbo_parts:
-                q_text = "What are the projected returns?"
-                await writer.add_question(
-                    category="supporting_evidence",
-                    question=q_text,
-                    answer="\n".join(lbo_parts),
-                    confidence=0.70,
-                    sort_order=5,
-                )
-                for part in lbo_parts:
-                    await writer.add_evidence(
-                        question_text=q_text,
-                        text=part,
-                        source="LBO Agent",
-                        source_type="api",
-                        is_supporting=True,
-                        confidence=0.70,
-                    )
-                await writer.set_source_confidence("LBO Agent", "api")
-    except Exception as hub_exc:
-        logger.warning("Failed to write LBO to Intelligence Hub: %s", hub_exc)
+    return state
 
+
+async def produce_lbo_evidence(state: DealState) -> DealState:
+    """Node 5: Produce structured EvidenceModule for the Decision Engine."""
+    from schemas.evidence import EvidenceMetric, EvidenceModule
+
+    lbo_results = state.get("lbo_results")
+    metrics: list[EvidenceMetric] = []
+    warnings: list[str] = []
+    insights: list[str] = []
+    sources: list[str] = ["LBO Agent"]
+
+    if not lbo_results or not isinstance(lbo_results, dict):
+        warnings.append("No LBO results available for evidence production")
+        module = EvidenceModule(
+            module_type="valuation",
+            company_id=state.get("company_id", 0),
+            metrics=metrics,
+            overall_confidence=0.0,
+            key_insights=insights,
+            warnings=warnings,
+            sources=sources,
+        )
+        state["lbo_evidence_module"] = module.model_dump(mode="json")
+        return state
+
+    for scenario_name in ["base", "bull", "bear"]:
+        scenario = lbo_results.get(scenario_name)
+        if not scenario or not isinstance(scenario, dict):
+            continue
+        irr = scenario.get("irr")
+        moic = scenario.get("moic")
+        if irr is not None:
+            is_supporting = irr > 0.20 if isinstance(irr, (int, float)) else False
+            metrics.append(EvidenceMetric(
+                name=f"{scenario_name.capitalize()} IRR",
+                value=round(irr, 4) if isinstance(irr, (int, float)) else str(irr),
+                direction="positive" if is_supporting else "negative",
+                confidence=0.75,
+                is_supporting=is_supporting,
+                is_contradictory=not is_supporting,
+                evidence_text=f"{scenario_name.capitalize()} scenario IRR: {irr:.1%}" if isinstance(irr, (int, float)) else str(irr),
+                source="LBO Agent",
+                source_type="api",
+            ))
+        if moic is not None:
+            is_supporting = moic > 2.0 if isinstance(moic, (int, float)) else False
+            metrics.append(EvidenceMetric(
+                name=f"{scenario_name.capitalize()} MOIC",
+                value=round(moic, 2) if isinstance(moic, (int, float)) else str(moic),
+                direction="positive" if is_supporting else "negative",
+                confidence=0.75,
+                is_supporting=is_supporting,
+                is_contradictory=not is_supporting,
+                evidence_text=f"{scenario_name.capitalize()} scenario MOIC: {moic:.2f}x" if isinstance(moic, (int, float)) else str(moic),
+                source="LBO Agent",
+                source_type="api",
+            ))
+        insights.append(f"{scenario_name.capitalize()}: IRR={irr:.1%}, MOIC={moic:.2f}x" if isinstance(irr, (int, float)) and isinstance(moic, (int, float)) else f"{scenario_name.capitalize()} scenario available")
+
+    # Entry multiple check
+    entry_multiple = None
+    scenarios = state.get("lbo_scenarios", {})
+    if isinstance(scenarios, dict):
+        base = scenarios.get("base", {})
+        if isinstance(base, dict):
+            entry_multiple = base.get("entry_multiple")
+    if entry_multiple is not None:
+        is_supporting = entry_multiple < 12.0 if isinstance(entry_multiple, (int, float)) else False
+        metrics.append(EvidenceMetric(
+            name="Entry Multiple",
+            value=round(entry_multiple, 1) if isinstance(entry_multiple, (int, float)) else str(entry_multiple),
+            direction="positive" if is_supporting else "negative",
+            confidence=0.70,
+            is_supporting=is_supporting,
+            is_contradictory=not is_supporting,
+            evidence_text=f"Entry multiple: {entry_multiple:.1f}x" if isinstance(entry_multiple, (int, float)) else str(entry_multiple),
+            source="LBO Agent",
+            source_type="api",
+        ))
+
+    avg_confidence = sum(m.confidence for m in metrics) / len(metrics) if metrics else 0.0
+
+    module = EvidenceModule(
+        module_type="valuation",
+        company_id=state.get("company_id", 0),
+        metrics=metrics,
+        overall_confidence=round(avg_confidence, 2),
+        key_insights=insights[:5],
+        warnings=warnings[:5],
+        sources=sources,
+    )
+
+    state["lbo_evidence_module"] = module.model_dump(mode="json")
     return state
 
 
@@ -335,12 +392,14 @@ builder.add_node("prepare_inputs", prepare_inputs)
 builder.add_node("run_model", run_model)
 builder.add_node("generate_sensitivity", generate_sensitivity)
 builder.add_node("interpret", interpret)
+builder.add_node("produce_lbo_evidence", produce_lbo_evidence)
 
 builder.set_entry_point("prepare_inputs")
 builder.add_edge("prepare_inputs", "run_model")
 builder.add_edge("run_model", "generate_sensitivity")
 builder.add_edge("generate_sensitivity", "interpret")
-builder.add_edge("interpret", END)
+builder.add_edge("interpret", "produce_lbo_evidence")
+builder.add_edge("produce_lbo_evidence", END)
 
 lbo_graph = builder.compile()
 

@@ -436,6 +436,116 @@ async def synthesize(state: DealState) -> DealState:
     return state
 
 
+async def produce_research_evidence(state: DealState) -> DealState:
+    """Node 5: Produce structured EvidenceModule for the Decision Engine."""
+    research_data = state.get("research", {})
+    if not research_data:
+        state["errors"] = state.get("errors", []) + [
+            "No research data available for evidence module"
+        ]
+        return state
+
+    from schemas.evidence import EvidenceMetric, EvidenceModule
+
+    metrics: list[EvidenceMetric] = []
+    warnings: list[str] = []
+    insights: list[str] = []
+    sources: list[str] = ["Research Agent"]
+
+    # TAM
+    tam = research_data.get("tam")
+    if tam is not None:
+        metrics.append(EvidenceMetric(
+            name="Market TAM",
+            value=f"${tam:.1f}B",
+            direction="stable",
+            confidence=0.75,
+            is_supporting=tam > 10,
+            is_contradictory=False,
+            evidence_text=f"Total addressable market of ${tam:.1f}B provides {'significant' if tam > 50 else 'adequate'} runway for growth.",
+            source="Research Agent",
+            source_type="api",
+        ))
+        insights.append(f"Market TAM of ${tam:.1f}B")
+
+    # CAGR
+    cagr = research_data.get("cagr")
+    if cagr is not None:
+        metrics.append(EvidenceMetric(
+            name="Industry CAGR",
+            value=f"{cagr:.1f}%",
+            direction="improving" if cagr > 5 else "stable",
+            confidence=0.70,
+            is_supporting=cagr > 3,
+            is_contradictory=cagr < 0,
+            evidence_text=f"Industry growing at {cagr:.1f}% CAGR indicates {'strong' if cagr > 5 else 'moderate' if cagr > 0 else 'negative'} tailwinds.",
+            source="Research Agent",
+            source_type="api",
+        ))
+        insights.append(f"Industry CAGR of {cagr:.1f}%")
+
+    # Growth Drivers
+    drivers = research_data.get("growth_drivers", [])
+    if drivers and isinstance(drivers, list):
+        for i, driver in enumerate(drivers[:3]):
+            metrics.append(EvidenceMetric(
+                name=f"Growth Driver {i+1}",
+                value="Present",
+                direction="improving",
+                confidence=0.75,
+                is_supporting=True,
+                is_contradictory=False,
+                evidence_text=driver,
+                source="Research Agent",
+                source_type="api",
+            ))
+        insights.append(f"{len(drivers)} growth drivers identified")
+
+    # Risks
+    risks = research_data.get("risks", [])
+    if risks and isinstance(risks, list):
+        for i, risk in enumerate(risks[:3]):
+            metrics.append(EvidenceMetric(
+                name=f"Risk Factor {i+1}",
+                value="Present",
+                direction="elevated",
+                confidence=0.70,
+                is_supporting=False,
+                is_contradictory=True,
+                evidence_text=risk,
+                source="Research Agent",
+                source_type="api",
+            ))
+            warnings.append(risk)
+        insights.append(f"{len(risks)} risk factors identified")
+
+    # Key Players
+    key_players = research_data.get("key_players", [])
+    if key_players and isinstance(key_players, list):
+        insights.append(f"Key players: {', '.join(key_players[:3])}")
+
+    # Regulatory
+    regulatory = research_data.get("regulatory_notes", "")
+    if regulatory and not regulatory.startswith("[LLM unavailable]"):
+        warnings.append(f"Regulatory: {regulatory[:100]}")
+
+    # Overall confidence
+    avg_confidence = sum(m.confidence for m in metrics) / len(metrics) if metrics else 0.0
+
+    module = EvidenceModule(
+        module_type="research",
+        company_id=state.get("company_id", 0),
+        metrics=metrics,
+        overall_confidence=round(avg_confidence, 2),
+        key_insights=insights[:5],
+        warnings=warnings[:5],
+        sources=sources,
+    )
+
+    state["research_evidence_module"] = module.model_dump(mode="json")
+    return state
+
+
 # ── Graph wiring ───────────────────────────────────────────────────────────
 
 builder = StateGraph(DealState)
@@ -443,12 +553,14 @@ builder.add_node("classify_sector", classify_sector)
 builder.add_node("retrieve_filings", retrieve_filings)
 builder.add_node("web_research", web_research)
 builder.add_node("synthesize", synthesize)
+builder.add_node("produce_research_evidence", produce_research_evidence)
 
 builder.set_entry_point("classify_sector")
 builder.add_edge("classify_sector", "retrieve_filings")
 builder.add_edge("retrieve_filings", "web_research")
 builder.add_edge("web_research", "synthesize")
-builder.add_edge("synthesize", END)
+builder.add_edge("synthesize", "produce_research_evidence")
+builder.add_edge("produce_research_evidence", END)
 
 research_graph = builder.compile()
 

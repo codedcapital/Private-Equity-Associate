@@ -248,6 +248,152 @@ async def interpret(state: DealState) -> DealState:
     return state
 
 
+async def produce_evidence_module(state: DealState) -> DealState:
+    """Node 5: Produce structured EvidenceModule for the Decision Engine."""
+    financials = state.get("financials")
+    risk_flags = state.get("risk_flags", [])
+
+    if not financials:
+        state["errors"] = state.get("errors", []) + [
+            "No financials available for evidence module"
+        ]
+        return state
+
+    from schemas.evidence import EvidenceMetric, EvidenceModule
+
+    metrics: list[EvidenceMetric] = []
+    warnings: list[str] = []
+    sources: list[str] = ["Financial Agent"]
+
+    # Revenue CAGR
+    if financials.revenue_growth is not None:
+        growth_pct = financials.revenue_growth * 100
+        direction = "improving" if growth_pct > 10 else "stable" if growth_pct > 0 else "declining"
+        metrics.append(EvidenceMetric(
+            name="Revenue CAGR",
+            value=f"{growth_pct:.1f}%",
+            direction=direction,
+            confidence=0.90,
+            is_supporting=growth_pct > 5,
+            is_contradictory=growth_pct < 0,
+            evidence_text=f"Revenue growth of {growth_pct:.1f}% indicates {'strong' if growth_pct > 10 else 'moderate' if growth_pct > 0 else 'negative'} top-line expansion.",
+            source="Financial Agent",
+            source_type="api",
+        ))
+
+    # EBITDA Margin
+    if financials.ebitda_margin is not None:
+        margin_pct = financials.ebitda_margin * 100
+        direction = "improving" if margin_pct > 25 else "stable" if margin_pct > 15 else "declining"
+        metrics.append(EvidenceMetric(
+            name="EBITDA Margin",
+            value=f"{margin_pct:.1f}%",
+            direction=direction,
+            confidence=0.90,
+            is_supporting=margin_pct > 20,
+            is_contradictory=margin_pct < 10,
+            evidence_text=f"EBITDA margin of {margin_pct:.1f}% reflects {'strong' if margin_pct > 25 else 'reasonable' if margin_pct > 15 else 'weak'} profitability.",
+            source="Financial Agent",
+            source_type="api",
+        ))
+
+    # Cash Conversion
+    if financials.fcf_yield is not None:
+        fcf_pct = financials.fcf_yield * 100
+        metrics.append(EvidenceMetric(
+            name="Cash Conversion",
+            value=f"{fcf_pct:.1f}%",
+            direction="stable",
+            confidence=0.85,
+            is_supporting=fcf_pct > 50,
+            is_contradictory=fcf_pct < 20,
+            evidence_text=f"FCF conversion of {fcf_pct:.1f}% indicates {'strong' if fcf_pct > 50 else 'adequate' if fcf_pct > 20 else 'poor'} cash generation.",
+            source="Financial Agent",
+            source_type="api",
+        ))
+
+    # Leverage
+    if financials.net_debt_ebitda is not None:
+        leverage = financials.net_debt_ebitda
+        metrics.append(EvidenceMetric(
+            name="Leverage",
+            value=f"{leverage:.1f}x",
+            direction="stable" if leverage < 5 else "elevated",
+            confidence=0.85,
+            is_supporting=leverage < 4,
+            is_contradictory=leverage > 5,
+            evidence_text=f"Net Debt / EBITDA of {leverage:.1f}x is {'conservative' if leverage < 3 else 'manageable' if leverage < 5 else 'elevated'}.",
+            source="Financial Agent",
+            source_type="api",
+        ))
+
+    # ROIC (computed from available data)
+    if financials.ebitda and financials.net_debt and financials.revenue:
+        try:
+            capital = financials.net_debt + (financials.revenue * 0.3)  # rough equity proxy
+            roic = financials.ebitda / capital if capital > 0 else 0
+            metrics.append(EvidenceMetric(
+                name="ROIC",
+                value=f"{roic * 100:.1f}%",
+                direction="stable",
+                confidence=0.70,
+                is_supporting=roic > 0.15,
+                is_contradictory=roic < 0.05,
+                evidence_text=f"ROIC of {roic * 100:.1f}% indicates {'strong' if roic > 0.15 else 'adequate' if roic > 0.05 else 'weak'} capital returns.",
+                source="Financial Agent",
+                source_type="api",
+            ))
+        except Exception:
+            pass
+
+    # Forecast (placeholder — in Phase 4 this will be computed from historical trends)
+    if financials.revenue_growth is not None and financials.revenue is not None:
+        growth = financials.revenue_growth
+        forecast_revenue = financials.revenue * (1 + growth) ** 3
+        metrics.append(EvidenceMetric(
+            name="Forecast Revenue (3yr)",
+            value=f"${forecast_revenue:,.0f}",
+            direction="improving" if growth > 0.05 else "stable",
+            confidence=0.65,
+            is_supporting=growth > 0.05,
+            is_contradictory=growth < 0,
+            evidence_text=f"3-year revenue forecast of ${forecast_revenue:,.0f} assumes {growth * 100:.1f}% CAGR.",
+            source="Financial Agent",
+            source_type="api",
+        ))
+
+    # Risk flags → warnings
+    for flag in risk_flags or []:
+        warnings.append(flag)
+
+    # Overall confidence: average of metric confidences
+    avg_confidence = sum(m.confidence for m in metrics) / len(metrics) if metrics else 0.0
+
+    # Key insights
+    insights: list[str] = []
+    if financials.revenue_growth and financials.revenue_growth > 0.10:
+        insights.append(f"Revenue growing at {financials.revenue_growth * 100:.1f}% with stable margins")
+    if financials.ebitda_margin and financials.ebitda_margin > 0.20:
+        insights.append(f"Strong EBITDA margin of {financials.ebitda_margin * 100:.1f}%")
+    if financials.net_debt_ebitda and financials.net_debt_ebitda > 5:
+        insights.append(f"Elevated leverage at {financials.net_debt_ebitda:.1f}x")
+    if financials.fcf_yield and financials.fcf_yield > 0.50:
+        insights.append(f"Healthy FCF conversion of {financials.fcf_yield * 100:.1f}%")
+
+    module = EvidenceModule(
+        module_type="financial",
+        company_id=state.get("company_id", 0),
+        metrics=metrics,
+        overall_confidence=round(avg_confidence, 2),
+        key_insights=insights[:5],
+        warnings=warnings[:5],
+        sources=sources,
+    )
+
+    state["financial_evidence_module"] = module.model_dump(mode="json")
+    return state
+
+
 # ── Graph wiring ───────────────────────────────────────────────────────────
 
 from langgraph.graph import END, StateGraph
@@ -257,12 +403,14 @@ builder.add_node("load_data", load_data)
 builder.add_node("compute_ratios", compute_ratios)
 builder.add_node("flag_risks", flag_risks)
 builder.add_node("interpret", interpret)
+builder.add_node("produce_evidence_module", produce_evidence_module)
 
 builder.set_entry_point("load_data")
 builder.add_edge("load_data", "compute_ratios")
 builder.add_edge("compute_ratios", "flag_risks")
 builder.add_edge("flag_risks", "interpret")
-builder.add_edge("interpret", END)
+builder.add_edge("interpret", "produce_evidence_module")
+builder.add_edge("produce_evidence_module", END)
 
 financials_graph = builder.compile()
 

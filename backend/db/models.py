@@ -117,6 +117,7 @@ class IntelligenceHub(Base):
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
     executive_briefing: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision_output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
