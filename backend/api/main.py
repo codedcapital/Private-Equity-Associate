@@ -39,7 +39,8 @@ _origins = os.getenv("ALLOWED_ORIGINS", "")
 if _origins:
     ALLOWED_ORIGINS = [o.strip() for o in _origins.split(",") if o.strip()]
 else:
-    ALLOWED_ORIGINS = ["*"] if ENV == "dev" else []
+    # Allow all origins by default — configure explicitly for production lockdown
+    ALLOWED_ORIGINS = ["*"]
 
 app = FastAPI(
     title="AI-Driven PE Investment Platform",
