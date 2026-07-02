@@ -17,8 +17,9 @@ interface OverviewPageProps {
 }
 
 export function OverviewPage({ dealId, refreshKey }: OverviewPageProps) {
-  const { data, loading, error, refetch } = useDealOverview(dealId);
+  const { data, loading, error, refetch, rawResponse } = useDealOverview(dealId);
   const [viewMode] = useState<ViewMode>("document");
+  const [showDebug, setShowDebug] = useState(false);
 
   useEffect(() => {
     if (refreshKey !== undefined && refreshKey > 0) {
@@ -79,6 +80,36 @@ export function OverviewPage({ dealId, refreshKey }: OverviewPageProps) {
           />
         </>
       )}
+
+      {/* Debug panel */}
+      <div className="mt-8 border-t border-dashed border-[#d4d4d4] pt-4">
+        <button
+          onClick={() => setShowDebug(!showDebug)}
+          className="text-xs font-ov-mono text-[#737373] hover:text-[#171717] transition-colors"
+        >
+          {showDebug ? "Hide Debug" : "Show Debug"}
+        </button>
+        {showDebug && (
+          <div className="mt-2 p-3 bg-[#fafafa] border border-[#d4d4d4] rounded-sm overflow-auto max-h-[400px]">
+            <p className="text-xs font-ov-mono text-[#737373] mb-2">
+              Deal ID: {dealId} | Status: {loading ? "loading" : error ? "error" : "ok"}
+            </p>
+            {error && (
+              <div className="mb-2 p-2 bg-[#fef2f2] border border-[#f87171b3] rounded-sm">
+                <p className="text-xs font-ov-mono text-[#f87171b3]">Error: {error}</p>
+              </div>
+            )}
+            {rawResponse && (
+              <pre className="text-[10px] font-ov-mono text-[#525252] whitespace-pre-wrap break-all">
+                {JSON.stringify(rawResponse, null, 2)}
+              </pre>
+            )}
+            {!rawResponse && !error && (
+              <p className="text-xs font-ov-mono text-[#737373]">No response yet</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

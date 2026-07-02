@@ -16,7 +16,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -122,14 +122,26 @@ async def _build_overview(deal_id: int) -> dict[str, Any]:
             }
 
         # 3. Intelligence Hub
-        hub = await get_hub_by_company(session, company.id)
+        try:
+            hub = await get_hub_by_company(session, company.id)
+        except Exception as exc:
+            logger.warning("get_hub_by_company failed for deal %s: %s", deal_id, exc)
+            hub = None
 
         # 4. Investment View (latest or synthetic)
-        view = await get_latest_investment_view(session, deal_id)
+        try:
+            view = await get_latest_investment_view(session, deal_id)
+        except Exception as exc:
+            logger.warning("get_latest_investment_view failed for deal %s: %s", deal_id, exc)
+            view = None
         view_data = None
         if view:
-            view_data = InvestmentViewRead.model_validate(view).model_dump()
-        else:
+            try:
+                view_data = InvestmentViewRead.model_validate(view).model_dump()
+            except Exception as exc:
+                logger.warning("InvestmentView validation failed for deal %s: %s", deal_id, exc)
+                view = None
+        if not view_data:
             # ── Synthetic investment view from pipeline data ──
             parts: list[str] = []
             parts.append(f"<p><strong>{company.name}</strong> is a {company.sector or 'sector-undefined'} company.")
@@ -168,11 +180,19 @@ async def _build_overview(deal_id: int) -> dict[str, Any]:
             }
 
         # 5. Confidence Ledger (latest or synthetic)
-        ledger = await get_latest_confidence_ledger(session, deal_id)
+        try:
+            ledger = await get_latest_confidence_ledger(session, deal_id)
+        except Exception as exc:
+            logger.warning("get_latest_confidence_ledger failed for deal %s: %s", deal_id, exc)
+            ledger = None
         confidence_data = None
         if ledger:
-            confidence_data = ConfidenceLedgerBuilder.to_breakdown(ledger)
-        else:
+            try:
+                confidence_data = ConfidenceLedgerBuilder.to_breakdown(ledger)
+            except Exception as exc:
+                logger.warning("ConfidenceLedger to_breakdown failed for deal %s: %s", deal_id, exc)
+                ledger = None
+        if not confidence_data:
             # ── Synthetic confidence from financial snapshot ──
             base_score = 50
             factors = []
@@ -202,23 +222,26 @@ async def _build_overview(deal_id: int) -> dict[str, Any]:
         # 6. Evidence from Intelligence Hub or synthetic
         evidence_list: list[dict] = []
         if hub:
-            items = await list_evidence_items(session, hub_id=hub.id)
-            mapper = EvidenceStatusMapper()
-            for item in items:
-                status = item.evidence_status or mapper.classify_evidence_item(item)
-                evidence_list.append({
-                    "id": item.id,
-                    "module_name": item.source,
-                    "text": item.text,
-                    "status": status.value if isinstance(status, EvidenceStatus) else status,
-                    "source": item.source,
-                    "source_type": item.source_type,
-                    "confidence": item.confidence,
-                    "is_supporting": item.is_supporting,
-                    "is_contradictory": item.is_contradictory,
-                    "created_at": item.created_at.isoformat() if item.created_at else None,
-                })
-        else:
+            try:
+                items = await list_evidence_items(session, hub_id=hub.id)
+                mapper = EvidenceStatusMapper()
+                for item in items:
+                    status = item.evidence_status or mapper.classify_evidence_item(item)
+                    evidence_list.append({
+                        "id": item.id,
+                        "module_name": item.source,
+                        "text": item.text,
+                        "status": status.value if isinstance(status, EvidenceStatus) else status,
+                        "source": item.source,
+                        "source_type": item.source_type,
+                        "confidence": item.confidence,
+                        "is_supporting": item.is_supporting,
+                        "is_contradictory": item.is_contradictory,
+                        "created_at": item.created_at.isoformat() if item.created_at else None,
+                    })
+            except Exception as exc:
+                logger.warning("list_evidence_items failed for deal %s: %s", deal_id, exc)
+        if not evidence_list:
             # ── Synthetic evidence from financial snapshot ──
             if fin:
                 evidence_list.append({
@@ -261,8 +284,12 @@ async def _build_overview(deal_id: int) -> dict[str, Any]:
                 })
 
         # 7. Diligence Items (existing or synthetic)
-        diligence_items = await list_diligence_items(session, deal_id=deal_id)
-        diligence_data = [DiligenceItemRead.model_validate(d).model_dump() for d in diligence_items]
+        try:
+            diligence_items = await list_diligence_items(session, deal_id=deal_id)
+            diligence_data = [DiligenceItemRead.model_validate(d).model_dump() for d in diligence_items]
+        except Exception as exc:
+            logger.warning("list_diligence_items failed for deal %s: %s", deal_id, exc)
+            diligence_data = []
         if not diligence_data:
             # ── Synthetic default diligence items ──
             synthetic_items = [
@@ -294,21 +321,42 @@ async def _build_overview(deal_id: int) -> dict[str, Any]:
             diligence_data = synthetic_items
 
         # 8. Decision Readiness
-        readiness = await DecisionReadiness(deal_id, deal.stage.value).compute()
+        try:
+            readiness = await DecisionReadiness(deal_id, deal.stage.value).compute()
+        except Exception as exc:
+            logger.warning("DecisionReadiness.compute failed for deal %s: %s", deal_id, exc)
+            readiness = {
+                "score": 0,
+                "current_stage": deal.stage.value,
+                "met": [],
+                "unmet": ["Decision readiness engine unavailable"],
+                "recommended_next_step": "Continue gathering evidence",
+                "next_stage": None,
+                "diligence_summary": {
+                    "total": len(diligence_data),
+                    "complete": sum(1 for d in diligence_data if d.get("status") == "complete"),
+                    "open": sum(1 for d in diligence_data if d.get("status") != "complete"),
+                    "blockers": 0,
+                },
+            }
 
         # 9. Recent Events (last 10 or synthetic)
-        events = await list_deal_events(session, deal_id=deal_id, limit=10)
-        events_data = [
-            {
-                "id": e.id,
-                "event_type": e.event_type,
-                "actor_type": e.actor_type,
-                "actor_id": e.actor_id,
-                "description": e.description,
-                "created_at": e.created_at.isoformat() if e.created_at else None,
-            }
-            for e in events
-        ]
+        try:
+            events = await list_deal_events(session, deal_id=deal_id, limit=10)
+            events_data = [
+                {
+                    "id": e.id,
+                    "event_type": e.event_type,
+                    "actor_type": e.actor_type,
+                    "actor_id": e.actor_id,
+                    "description": e.description,
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
+                }
+                for e in events
+            ]
+        except Exception as exc:
+            logger.warning("list_deal_events failed for deal %s: %s", deal_id, exc)
+            events_data = []
         if not events_data:
             events_data = [
                 {

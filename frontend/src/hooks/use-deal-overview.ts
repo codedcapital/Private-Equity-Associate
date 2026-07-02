@@ -158,16 +158,19 @@ export interface UseDealOverviewResult {
   loading: boolean;
   error: string | null;
   refetch: () => void;
+  rawResponse: OverviewResponse | null;
 }
 
 export function useDealOverview(dealId: string): UseDealOverviewResult {
   const [data, setData] = useState<DealOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [rawResponse, setRawResponse] = useState<OverviewResponse | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setRawResponse(null);
 
     try {
       const numericId = parseInt(dealId, 10);
@@ -178,6 +181,7 @@ export function useDealOverview(dealId: string): UseDealOverviewResult {
 
       const backendData = await getOverview(numericId);
       console.log("[useDealOverview] raw response:", JSON.stringify(backendData, null, 2));
+      setRawResponse(backendData);
       const result = transformBackendToOverview(backendData, dealId);
       console.log("[useDealOverview] transformed:", result);
       setData(result);
@@ -200,5 +204,5 @@ export function useDealOverview(dealId: string): UseDealOverviewResult {
     loadData();
   }, [loadData]);
 
-  return { data, loading, error, refetch };
+  return { data, loading, error, refetch, rawResponse };
 }
