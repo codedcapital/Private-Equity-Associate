@@ -111,12 +111,16 @@ function transformBackendToOverview(raw: OverviewResponse, dealId: string): Deal
   const readiness: Readiness | null = raw?.decision_readiness
     ? {
         score: Math.round(raw.decision_readiness.score ?? 0),
-        items: (raw.decision_readiness.items ?? raw.decision_readiness.checklist ?? []).map(
-          (item: any) => ({
-            label: item.label ?? item.description ?? "Item",
-            met: item.met ?? item.completed ?? false,
-          })
-        ),
+        items: [
+          ...(raw.decision_readiness.met ?? []).map((m: string) => ({
+            label: m,
+            met: true,
+          })),
+          ...(raw.decision_readiness.unmet ?? []).map((u: string) => ({
+            label: u,
+            met: false,
+          })),
+        ],
       }
     : null;
 

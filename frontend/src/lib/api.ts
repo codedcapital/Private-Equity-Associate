@@ -28,8 +28,205 @@ export async function apiCall<T>(url: string, opts?: any): Promise<T> {
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
+/* ─── Opportunity Discovery ─── */
 
-/* ─── Sourcing ─── */
+export interface StrategyCriteria {
+  sectors: string[];
+  geographies: string[];
+  business_models: string[];
+  ownership_types: string[];
+  min_revenue: number | null;
+  max_revenue: number | null;
+  min_ebitda: number | null;
+  max_ebitda: number | null;
+  min_ebitda_margin: number | null;
+  min_revenue_growth: number | null;
+  max_net_debt_ebitda: number | null;
+  min_fcf_yield: number | null;
+  customer_concentration: string | null;
+  product_type: string | null;
+}
+
+export interface InvestmentStrategy {
+  id: number;
+  name: string;
+  is_active: boolean;
+  is_default: boolean;
+  criteria: StrategyCriteria;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CoverageMetrics {
+  universe: number;
+  financial_match: number;
+  strategic_match: number;
+  high_conviction: number;
+  breakdown: Record<string, number>;
+}
+
+export interface FinancialSnapshot {
+  revenue: number | null;
+  ebitda: number | null;
+  ebitda_margin: number | null;
+  revenue_growth: number | null;
+  net_debt_ebitda: number | null;
+  fcf: number | null;
+  fcf_yield: number | null;
+}
+
+export interface OpportunityItem {
+  company_id: number;
+  company_name: string;
+  ticker: string | null;
+  sector: string | null;
+  fit_score: number;
+  confidence_score: number;
+  recommendation: string | null;
+  trend: number | null;
+  why: string;
+  evidence_coverage: number | null;
+  has_deal: boolean;
+  deal_id: number | null;
+  financial_snapshot: FinancialSnapshot | null;
+}
+
+export interface CriterionMatch {
+  criterion: string;
+  status: string;
+  detail: string | null;
+}
+
+export interface DiscoverySummary {
+  company_id: number;
+  company_name: string;
+  ticker: string | null;
+  fit_score: number;
+  confidence_score: number;
+  why_surfaced: string[];
+  matches: CriterionMatch[];
+  concerns: string[];
+  evidence_coverage: number;
+  recommendation: string;
+  has_deal: boolean;
+  deal_id: number | null;
+  financial_snapshot: FinancialSnapshot | null;
+}
+
+export interface DailyBriefingItem {
+  type: string;
+  company_id: number;
+  company_name: string;
+  description: string;
+  direction: string | null;
+  delta: number | null;
+}
+
+export interface DailyBriefing {
+  date: string;
+  new_opportunities: number;
+  exited_opportunities: number;
+  scores_increased: number;
+  scores_decreased: number;
+  earnings_reported: number;
+  ma_transactions: number;
+  items: DailyBriefingItem[];
+}
+
+export interface FailedScreenCompany {
+  company_id: number;
+  company_name: string;
+  ticker: string | null;
+  sector: string | null;
+  financial_snapshot: FinancialSnapshot | null;
+  failure_reason: string;
+  failure_detail: string;
+}
+
+export interface SignalFeedItem {
+  id: number;
+  deal_id: number | null;
+  company_id: number;
+  company_name: string;
+  signal_type: string;
+  direction: string | null;
+  title: string;
+  description: string | null;
+  confidence: string;
+  detected_at: string;
+}
+
+export interface ThemeItem {
+  name: string;
+  company_count: number;
+  avg_score: number;
+  trend: string;
+  description: string;
+}
+
+export interface StrategyCoverage {
+  strategy_name: string;
+  universe: number;
+  financial_match: number;
+  research_complete: number;
+  investment_ready: number;
+  research_velocity: number;
+  investment_ready_velocity: number;
+  coverage_percent: number;
+}
+
+export async function getActiveStrategy(): Promise<InvestmentStrategy> {
+  return apiCall<InvestmentStrategy>("/opportunity-discovery/strategy");
+}
+
+export async function updateStrategy(payload: Partial<InvestmentStrategy>): Promise<InvestmentStrategy> {
+  return apiCall<InvestmentStrategy>("/opportunity-discovery/strategy", { method: "PUT", json: payload });
+}
+
+export async function getCoverageMetrics(): Promise<CoverageMetrics> {
+  return apiCall<CoverageMetrics>("/opportunity-discovery/coverage");
+}
+
+export async function getOpportunities(params?: { min_score?: number; limit?: number; offset?: number }): Promise<OpportunityItem[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.min_score) searchParams.set("min_score", String(params.min_score));
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.offset) searchParams.set("offset", String(params.offset));
+  const query = searchParams.toString();
+  return apiCall<OpportunityItem[]>(`/opportunity-discovery/opportunities${query ? "?" + query : ""}`);
+}
+
+export async function getDiscoverySummary(companyId: number): Promise<DiscoverySummary> {
+  return apiCall<DiscoverySummary>(`/opportunity-discovery/opportunities/${companyId}`);
+}
+
+export async function getSignalFeed(params?: { limit?: number; signal_type?: string }): Promise<SignalFeedItem[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.signal_type) searchParams.set("signal_type", params.signal_type);
+  const query = searchParams.toString();
+  return apiCall<SignalFeedItem[]>(`/opportunity-discovery/signals${query ? "?" + query : ""}`);
+}
+
+export async function getDailyBriefing(): Promise<DailyBriefing> {
+  return apiCall<DailyBriefing>("/opportunity-discovery/daily-briefing");
+}
+
+export async function getFailedScreenCompanies(reason: string, params?: { limit?: number; offset?: number }): Promise<FailedScreenCompany[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.offset) searchParams.set("offset", String(params.offset));
+  const query = searchParams.toString();
+  return apiCall<FailedScreenCompany[]>(`/opportunity-discovery/failed-screen/${reason}${query ? "?" + query : ""}`);
+}
+
+export async function getEmergingThemes(): Promise<ThemeItem[]> {
+  return apiCall<ThemeItem[]>("/opportunity-discovery/themes");
+}
+
+export async function getStrategyCoverage(): Promise<StrategyCoverage> {
+  return apiCall<StrategyCoverage>("/opportunity-discovery/strategy-coverage");
+}
 export interface SourcingCandidate {
   name: string;
   company_id?: number | null;

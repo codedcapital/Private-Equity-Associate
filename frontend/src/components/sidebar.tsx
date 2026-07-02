@@ -8,7 +8,7 @@ const navItems = [
   { id: "dashboard", label: "Dashboard", icon: "M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z", href: "/dashboard" },
   { id: "pipeline", label: "Pipeline", icon: "M4 4h5v16H4zM13 4h5v16h-5z", href: "/pipeline" },
   { id: "deals", label: "Deals", icon: "M3 7h18v13H3zM8 7V4h8v3", href: "/dashboard" },
-  { id: "sourcing", label: "Sourcing", icon: "M11 4a7 7 0 100 14 7 7 0 000-14zM21 21l-4.3-4.3", href: "/sourcing" },
+  { id: "opportunity-discovery", label: "Opportunity Discovery", icon: "M11 4a7 7 0 100 14 7 7 0 000-14zM21 21l-4.3-4.3", href: "/opportunity-discovery" },
   { id: "research", label: "Research", icon: "M6 2h9l3 3v17H6zM14 2v4h4M9 12h6M9 16h6", href: "/research" },
   { id: "settings", label: "Settings", icon: "M4 7h16M4 12h16M4 17h16M9 7v0M15 12v0M7 17v0", href: "/settings" },
 ];

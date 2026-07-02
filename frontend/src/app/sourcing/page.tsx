@@ -1,10 +1,5 @@
-import AppLayout from "@/components/app-layout";
-import SourcingPage from "./sourcing-page";
+import { redirect } from "next/navigation";
 
-export default function Sourcing() {
-  return (
-    <AppLayout>
-      <SourcingPage />
-    </AppLayout>
-  );
+export default function SourcingRedirectPage() {
+  redirect("/opportunity-discovery");
 }
