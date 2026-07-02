@@ -17,7 +17,7 @@ interface OverviewPageProps {
 }
 
 export function OverviewPage({ dealId, refreshKey }: OverviewPageProps) {
-  const { data, loading, refetch } = useDealOverview(dealId);
+  const { data, loading, error, refetch } = useDealOverview(dealId);
   const [viewMode] = useState<ViewMode>("document");
 
   useEffect(() => {
@@ -28,6 +28,19 @@ export function OverviewPage({ dealId, refreshKey }: OverviewPageProps) {
 
   return (
     <div className="max-w-[960px] mx-auto px-8 py-8 flex flex-col" style={{ gap: "48px" }}>
+      {error && (
+        <div className="p-4 border border-[#f87171b3] bg-[#f87171b3]/10 rounded-sm">
+          <p className="font-ov-sans text-sm text-[#f87171b3]">
+            Error loading overview: {error}
+          </p>
+          <button
+            onClick={refetch}
+            className="mt-2 text-xs font-ov-sans text-[#c7a84b] hover:underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {viewMode === "data" ? (
         <div className="flex items-center justify-center h-[400px]">
           <p className="font-ov-sans text-sm text-[#525252]">

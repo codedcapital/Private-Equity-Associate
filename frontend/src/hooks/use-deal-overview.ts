@@ -177,14 +177,16 @@ export function useDealOverview(dealId: string): UseDealOverviewResult {
       }
 
       const backendData = await getOverview(numericId);
+      console.log("[useDealOverview] raw response:", JSON.stringify(backendData, null, 2));
       const result = transformBackendToOverview(backendData, dealId);
+      console.log("[useDealOverview] transformed:", result);
       setData(result);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to load deal overview";
       setError(message);
       setData(null);
-      console.error("useDealOverview error:", err);
+      console.error("[useDealOverview] error:", err);
     } finally {
       setLoading(false);
     }
